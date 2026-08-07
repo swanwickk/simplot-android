@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 简化军标图标：罗盘 + 舰船符号 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,54 m-30,0 a30,30 0 1,1 60,0 a30,30 0 1,1 -60,0" />
+    <path
+        android:fillColor="#0F6E56"
+        android:pathData="M54,34 L60,54 L54,50 L48,54 Z" />
+    <path
+        android:fillColor="#0F6E56"
+        android:pathData="M54,74 L48,54 L54,58 L60,54 Z" />
+</vector>
