@@ -114,6 +114,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         revision++
         // 视野自适应由 SceneCanvas.onSizeChanged 按真实画布尺寸执行
         toast("已加载场景：${loaded.scenario.scenarioName}（${loaded.units.size} 单位）")
+        // Bug 1 防御：Gson 对缺 Side 字段的单位静默落默认值 "Blue"（Unit.side 默认值）
+        // → 单位非空且全部为 Blue 时提示用户场景可能缺 Side 字段；
+        // 真实场景（如冰海巨兽含 Red）不会命中，不误报
+        val units = loaded.units
+        if (units.isNotEmpty() && units.all { it.side == "Blue" }) {
+            toast("场景单位缺少 Side 字段，已按蓝方显示")
+        }
     }
 
     /** 加载地图文件：.json → MapMaker 配置；图片 → 位图 */

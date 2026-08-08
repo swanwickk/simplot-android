@@ -69,21 +69,24 @@ fun SceneCanvas(
                     }
                 }
             }
-            .pointerInput(Unit) {
+            .pointerInput(measureMode) {
+                // Bug 3 修复：测量模式下完全不注册 transform 手势（单指=画线、无地图拖动/缩放）。
+                // measureMode 作为 key：切换时协程取消重启，重新评估（key=Unit 时读到的是陈旧值，C1 的 pan 禁用不生效）。
+                if (measureMode) return@pointerInput
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     // 缩放：以双指中心为锚点（阈值判断，避免浮点噪声吞掉 pan）
                     if (abs(zoom - 1f) > 0.001f) {
                         camera.zoomAt(zoom, centroid.x, centroid.y, size.width, size.height)
                     }
                     // 平移：始终生效（单指拖动 / 双指缩放时跟随）
-                    // ⚠️ 测量模式下禁用单指平移（否则拖动画线与地图拖动冲突，C1 修复）
+                    // ⚠️ 测量模式下禁用单指平移（否则拖动画线与地图拖动冲突，C1 修复，双保险）
                     val measuring = measureMode
                     if (!measuring && (abs(pan.x) > 0.5f || abs(pan.y) > 0.5f)) {
                         camera.pan(pan.x, pan.y)
                     }
                 }
             }
-            .pointerInput(file) {
+            .pointerInput(file, measureMode) {
                 if (replaying) return@pointerInput   // 回放模式下不响应点选
                 if (measureMode) {
                     // 测量模式：按下=起点，拖拽=延伸，抬起=完成（桌面版 AddNewMeasure/ExtendMeasure）
@@ -159,7 +162,7 @@ fun SceneCanvas(
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     val frameUnit = u.copy(x = pos.x, y = pos.y)
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, symbolStyle = symbolStyle)
-                    drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy)
+                    drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom)
                 }
             }
         } else {
@@ -167,7 +170,7 @@ fun SceneCanvas(
                 val (sx, sy) = camera.worldToScreen(u.x, u.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy, selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle)
-                    drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy)
+                    drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom)
                 }
             }
         }
@@ -205,13 +208,18 @@ fun SceneCanvas(
     }
 }
 
-/** 标签绘制（名称 + 航向航速） */
-private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, sy: Float) {
+/** 标签字号/偏移基准缩放：与 [Camera] 初始 zoom（0.0015f）一致，作为“1 倍”参考 */
+private const val BASE_ZOOM = 0.0015f
+
+/** 标签绘制（名称 + 航向航速）：字号与锚点偏移随 zoom 等比缩放（Bug 2） */
+private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, sy: Float, zoom: Float) {
     val tag = u.textTags
     if (!tag.tagName && !tag.tagCourseSpeed) return
+    // k = 缩放比例（zoom/BASE_ZOOM，默认 zoom 下 k=1 与原 11f/10/-8 行为一致），clamp 防极端值
+    val k = (zoom / BASE_ZOOM).coerceIn(0.7f, 2.5f)
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = UnitRenderer.colorOf(u.side)
-        textSize = 11f
+        textSize = (11f * (zoom / BASE_ZOOM)).coerceIn(8f, 28f)
     }
     val parts = mutableListOf<String>()
     if (tag.tagName && u.name.isNotEmpty()) parts.add(u.name)
@@ -220,7 +228,7 @@ private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, s
     }
     val text = parts.joinToString("  ")
     if (text.isNotEmpty()) {
-        canvas.drawText(text, sx + 10f, sy - 8f, paint)
+        canvas.drawText(text, sx + 10f * k, sy - 8f * k, paint)
     }
 }
 

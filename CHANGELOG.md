@@ -5,6 +5,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.2] - 2026-08-08
+
+三个 Bug 修复（阵营显示 / 标签缩放 / 手势冲突）。
+
+### 修复
+- **示例剧本“都是蓝的”**：用户场景 JSON 缺 `Side` 字段时 Gson 静默落默认值 `"Blue"`（无提示）→ 全军蓝。新增防御：加载场景后检测“单位非空但全部为 Blue”→ toast 警告“场景单位缺少 Side 字段，已按蓝方显示”；同时修复 `SideParsingTest` 空转（示例场景此前不在 test resources，断言从未真正执行），现真实验证冰海巨兽 2 红 5 蓝、拉普拉塔 1 红 3 蓝，并断言红蓝渲染色值不同
+- **放大地图时算子标签不放大**：`drawUnitLabel` 字号/锚点偏移固定 11f/10/-8，现随相机 zoom 等比缩放（`textSize = 11f * zoom/0.0015f` clamp 8..28，偏移乘 k=zoom/0.0015f clamp 0.7..2.5）
+- **测量模式画线与拖动地图冲突**：transform 手势 pointerInput key 从 `Unit` 改为 `measureMode`，测量模式下完全不注册缩放/平移（协程随 key 重启，不再读到陈旧值）；点选/画线块 key 同步加 `measureMode`，确保模式切换后手势即时生效
+
+### 其他
+- 62 测试全过（SideParsingTest 修复空转 + 新增断言）
+
 ## [0.3.1] - 2026-08-08
 
 Phase 2 引擎补全 + Phase 3 渲染交互增强。

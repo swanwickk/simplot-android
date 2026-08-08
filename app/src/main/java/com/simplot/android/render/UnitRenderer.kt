@@ -19,13 +19,15 @@ object UnitRenderer {
     enum class SymbolStyle { NTDS, CWS }
 
     private val sideColors = mapOf(
-        "Blue" to Color.rgb(0, 90, 200),
-        "Red" to Color.rgb(200, 30, 30),
-        "Neutral" to Color.rgb(120, 120, 120),
-        "Unknown" to Color.rgb(90, 90, 90)
+        // 与 Color.rgb(r,g,b) 逐字节一致（0xFF<<24 | r<<16 | g<<8 | b），
+        // 内联为纯 Kotlin 常量以便 JVM 单测直接断言色值（android.graphics.Color 在单测中不可用）
+        "Blue" to 0xFF005AC8.toInt(),      // Color.rgb(0, 90, 200)
+        "Red" to 0xFFC81E1E.toInt(),       // Color.rgb(200, 30, 30)
+        "Neutral" to 0xFF787878.toInt(),   // Color.rgb(120, 120, 120)
+        "Unknown" to 0xFF5A5A5A.toInt()    // Color.rgb(90, 90, 90)
     )
 
-    fun colorOf(side: String): Int = sideColors[side] ?: Color.rgb(90, 90, 90)
+    fun colorOf(side: String): Int = sideColors[side] ?: 0xFF5A5A5A.toInt()
 
     fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false, symbolStyle: SymbolStyle = SymbolStyle.NTDS) {
         // 速度领导线（桌面版 SpeedLeaders.Draw）：沿航向向前，长度与航速成比例
