@@ -8,169 +8,46 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.net.Uri
-import com.google.gson.JsonArray
-import com.google.gson.JsonObject
-import com.google.gson.JsonParser
 
 /**
- * 地图渲染器：网格背景 + 位图地图贴图 + 陆地多边形。
+ * 地图渲染器（架构重构 Phase 1：拆为「解析 + 绘制」两层）。
  *
- * 官方地图配置（MapMaker JSON，实测 Iron Bottom Sound JJWS1.json）：
- * - BackgroundFileName: 背景图文件名（与配置同目录）
- * - Scale: 比例（次要，渲染以 BoundaryRect 为准）
- * - BoundaryRect: {Left, Top, Width, Height} —— 地图世界范围
- *   ⚠️ 坐标语义：地图坐标为 海里×10000，存档坐标为 海里×100000
- *   （实测 Henderson Field：地图 (121574,-158178) ↔ 存档 (1214285,-1581818)，正好 ×10）
- * - Land Polygons / Misc Polygons: 陆地/覆盖多边形（Path 为 [x1,y1,x2,y2,...]）
- * - Depth Labels / Misc Labels: 文字标注（X/Y 为锚点）
+ * - 解析：委托 [MapDataParser]（纯 Kotlin，产出点列表）
+ * - 绘制：本类只把点列表转屏幕坐标画出来（android.graphics 薄壳）
  *
- * 渲染时全部坐标 ×10 转换到存档世界坐标。
+ * 旧格式兼容：parseMapConfig（txt）保留；官方 JSON 一律走 parser。
  */
 class MapRenderer {
 
     var bitmap: Bitmap? = null
     var mapScaleMetersPerPx: Double = 0.0    // 米/像素（旧 txt 格式兼容）
-    var mapWorldMinX = 0L
-    var mapWorldMinY = 0L
 
-    // ---- 官方 JSON 配置（BoundaryRect，存档世界坐标 = 地图坐标×10） ----
-    var boundaryLeft = 0L
-    var boundaryTop = 0L
-    var boundaryWidth = 0L
-    var boundaryHeight = 0L
-    var hasBoundary = false
+    // ---- 解析器（数据源） ----
+    val parser = MapDataParser()
 
-    // 陆地多边形（存档世界坐标）
-    private val landPaths = mutableListOf<Path>()
-    private val miscPaths = mutableListOf<Pair<Path, Int>>()   // Path, colorName 索引
-    private val labels = mutableListOf<Triple<String, Long, Long>>()  // text, x, y
-
-    // ---- 桌面版完整绘制层（Draw 顺序：Waters→DepthPolys→Land→Countries→Cities→Border→MapBoundary）----
-    private val waterLabels = mutableListOf<Triple<String, Long, Long>>()    // 水域名
-    private val depthPolys = mutableListOf<Pair<Path, Int>>()                // 深度色带 (Path, 级别)
-    private val cityLabels = mutableListOf<Triple<String, Long, Long>>()     // 城市 (text, x, y)
-    private val countryLabels = mutableListOf<Triple<String, Long, Long>>()  // 国家名
-    private val borderPaths = mutableListOf<Path>()                          // 国界线
-    private val depthTexts = mutableListOf<String>()                          // 深度标签（纯字符串，如 "Depth1"）
+    // 便捷访问（保留旧调用点兼容）
+    var mapWorldMinX: Long get() = parser.mapWorldMinX; set(v) { parser.mapWorldMinX = v }
+    var mapWorldMinY: Long get() = parser.mapWorldMinY; set(v) { parser.mapWorldMinY = v }
+    var boundaryLeft: Long get() = parser.boundaryLeft; set(v) { parser.boundaryLeft = v }
+    var boundaryTop: Long get() = parser.boundaryTop; set(v) { parser.boundaryTop = v }
+    var boundaryWidth: Long get() = parser.boundaryWidth; set(v) { parser.boundaryWidth = v }
+    var boundaryHeight: Long get() = parser.boundaryHeight; set(v) { parser.boundaryHeight = v }
+    var hasBoundary: Boolean get() = parser.hasBoundary; set(v) { parser.hasBoundary = v }
+    var pendingBackgroundName: String?
+        get() = parser.pendingBackgroundName
+        set(v) { parser.pendingBackgroundName = v }
 
     fun loadMapImage(contentResolver: ContentResolver, uri: Uri) {
         bitmap = BitmapFactory.decodeStream(contentResolver.openInputStream(uri))
     }
 
-    /**
-     * 解析官方 JSON 地图配置（MapMaker 输出）。坐标 ×10 转为存档世界坐标。
-     */
+    /** 解析官方 JSON 地图配置（委托 MapDataParser） */
     fun parseMapConfigJson(text: String) {
-        val root = try { JsonParser.parseString(text).asJsonObject } catch (e: Exception) { return }
-        // BoundaryRect
-        root.getAsJsonObject("BoundaryRect")?.let { b ->
-            boundaryLeft = b.get("Left")?.asLong ?: 0L
-            boundaryTop = b.get("Top")?.asLong ?: 0L
-            boundaryWidth = b.get("Width")?.asLong ?: 0L
-            boundaryHeight = b.get("Height")?.asLong ?: 0L
-            if (boundaryWidth > 0 && boundaryHeight > 0) {
-                hasBoundary = true
-                // 地图世界范围（存档坐标 = 地图坐标 × 10）
-                mapWorldMinX = boundaryLeft * 10
-                mapWorldMinY = (boundaryTop - boundaryHeight) * 10
-                // 旧字段兼容（米/像素 → 由 BoundaryRect 反推）
-                val metersPerWorldUnit = 1852.0 / 100000.0
-                mapScaleMetersPerPx = metersPerWorldUnit * 10 * (boundaryWidth / (boundaryWidth.toDouble()))
-            }
-        }
-        // 背景图
-        root.get("BackgroundFileName")?.takeIf { !it.isJsonNull }?.let {
-            pendingBackgroundName = it.asString
-        }
-        // 陆地多边形
-        landPaths.clear()
-        parsePolygons(root.getAsJsonArray("Land Polygons")) { path, colorIdx ->
-            landPaths.add(path)
-        }
-        // 覆盖多边形（机场、标注区等）
-        miscPaths.clear()
-        parsePolygons(root.getAsJsonArray("Misc Polygons")) { path, colorIdx ->
-            miscPaths.add(path to colorIdx)
-        }
-        // 文字标注
-        labels.clear()
-        parseLabelArray(root.getAsJsonArray("Misc Labels"), labels)
-
-        // ---- 桌面版完整层 ----
-        // 水域名（Water Labels: {Name, X, Y, Rotation, IsMajor}）
-        waterLabels.clear()
-        parseLabelArray(root.getAsJsonArray("Water Labels"), waterLabels)
-        // 城市（City Labels: {Name, X, Y, Position}）
-        cityLabels.clear()
-        parseLabelArray(root.getAsJsonArray("City Labels"), cityLabels)
-        // 国家名（Country Labels: {Name, X, Y, Rotation}）
-        countryLabels.clear()
-        parseLabelArray(root.getAsJsonArray("Country Labels"), countryLabels)
-        // 深度色带（Depth Polygons: {Name, DepthLevelIndex, Path}；字符串形式跳过）
-        depthPolys.clear()
-        root.getAsJsonArray("Depth Polygons")?.forEach { el ->
-            if (!el.isJsonObject) return@forEach
-            val o = el.asJsonObject
-            val pathArr = o.getAsJsonArray("Path") ?: return@forEach
-            val lvl = (o.get("DepthLevelIndex")?.asInt ?: 0).coerceIn(0, 4)
-            depthPolys.add(pathFromArray(pathArr) to lvl)
-        }
-        // 深度标签（Depth Labels: 字符串数组或对象数组）
-        depthTexts.clear()
-        root.getAsJsonArray("Depth Labels")?.forEach { el ->
-            if (el.isJsonPrimitive) depthTexts.add(el.asString)
-        }
-        // 国界线（Border Polys: {Name, Path}）
-        borderPaths.clear()
-        root.getAsJsonArray("Border Polys")?.forEach { el ->
-            if (!el.isJsonObject) return@forEach
-            val pathArr = el.asJsonObject.getAsJsonArray("Path") ?: return@forEach
-            borderPaths.add(pathFromArray(pathArr))
-        }
-    }
-
-    private fun parseLabelArray(arr: JsonArray?, sink: MutableList<Triple<String, Long, Long>>) {
-        if (arr == null) return
-        arr.forEach { el ->
-            if (!el.isJsonObject) return@forEach
-            val o = el.asJsonObject
-            val name = o.get("Name")?.asString ?: return@forEach
-            val x = (o.get("X")?.asLong ?: 0L) * 10
-            val y = (o.get("Y")?.asLong ?: 0L) * 10
-            sink.add(Triple(name, x, y))
-        }
-    }
-
-    private fun pathFromArray(pathArr: JsonArray): Path {
-        val path = Path()
-        var first = true
-        for (i in 0 until pathArr.size() step 2) {
-            val x = pathArr.get(i).asLong * 10
-            val y = pathArr.get(i + 1).asLong * 10
-            if (first) { path.moveTo(x.toFloat(), y.toFloat()); first = false }
-            else path.lineTo(x.toFloat(), y.toFloat())
-        }
-        path.close()
-        return path
-    }
-
-    private fun parsePolygons(arr: JsonArray?, sink: (Path, Int) -> Unit) {
-        if (arr == null) return
-        var colorIdx = 0
-        arr.forEach { el ->
-            val o = el.asJsonObject
-            val pathArr = o.getAsJsonArray("Path") ?: return@forEach
-            val path = Path()
-            var first = true
-            for (i in 0 until pathArr.size() step 2) {
-                val x = pathArr.get(i).asLong * 10
-                val y = pathArr.get(i + 1).asLong * 10
-                if (first) { path.moveTo(x.toFloat(), y.toFloat()); first = false }
-                else path.lineTo(x.toFloat(), y.toFloat())
-            }
-            path.close()
-            sink(path, colorIdx)
-            colorIdx++
+        parser.parse(text)
+        // 旧字段兼容（米/像素 → 由 BoundaryRect 反推）
+        if (parser.hasBoundary) {
+            val metersPerWorldUnit = 1852.0 / 100000.0
+            mapScaleMetersPerPx = metersPerWorldUnit * 10 * (parser.boundaryWidth / (parser.boundaryWidth.toDouble()))
         }
     }
 
@@ -187,7 +64,6 @@ class MapRenderer {
             strokeWidth = 1f
             style = Paint.Style.STROKE
         }
-        // 计算网格间距（世界单位）—— 使屏幕间距 ≈ 80px
         val worldPerPx = 1.0f / camera.zoom
         val screenSpacing = 80f
         val worldSpacing = (worldPerPx * screenSpacing).toLong()
@@ -226,12 +102,11 @@ class MapRenderer {
     /** 若已加载地图位图且配置比例尺，绘制贴图（官方 JSON：按 BoundaryRect 定位） */
     fun drawBitmap(canvas: Canvas, camera: Camera, canvasW: Int, canvasH: Int) {
         val bmp = bitmap ?: return
-
-        if (hasBoundary) {
-            // 官方格式：地图世界范围 = BoundaryRect（×10），左上角 = (mapWorldMinX, mapWorldMinY)
-            val worldW = boundaryWidth * 10
-            val worldH = boundaryHeight * 10
-            val (sx0, sy0) = camera.worldToScreen(mapWorldMinX, mapWorldMinY + worldH, canvasW, canvasH)
+        val p = parser
+        if (p.hasBoundary) {
+            val worldW = p.boundaryWidth * 10
+            val worldH = p.boundaryHeight * 10
+            val (sx0, sy0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY + worldH, canvasW, canvasH)
             val screenW = (worldW * camera.zoom).toFloat()
             val screenH = (worldH * camera.zoom).toFloat()
             val rect = android.graphics.RectF(sx0, sy0, sx0 + screenW, sy0 + screenH)
@@ -239,19 +114,16 @@ class MapRenderer {
             canvas.drawBitmap(bmp, null, rect, paint)
             return
         }
-
         if (mapScaleMetersPerPx <= 0.0) {
-            // 无比例尺：直接以 1:1 世界单位贴图（退化处理）
             val bm = android.graphics.RectF(0f, 0f, bmp.width.toFloat(), bmp.height.toFloat())
             canvas.drawBitmap(bmp, null, bm, null)
             return
         }
-        // 旧格式：地图像素 → 世界单位：1px = mapScaleMetersPerPx 米；世界单位=海里×100000
-        val metersPerWorldUnit = 1852.0 // 1 海里 = 1852 米
+        val metersPerWorldUnit = 1852.0
         val worldPerPx = mapScaleMetersPerPx / metersPerWorldUnit * 100000.0
         val mapWorldW = bmp.width * worldPerPx
         val mapWorldH = bmp.height * worldPerPx
-        val (sx0, sy0) = camera.worldToScreen(mapWorldMinX, mapWorldMinY, canvasW, canvasH)
+        val (sx0, sy0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY, canvasW, canvasH)
         val screenW = (mapWorldW * camera.zoom).toFloat()
         val screenH = (mapWorldH * camera.zoom).toFloat()
         val rect = android.graphics.RectF(sx0, sy0, sx0 + screenW, sy0 + screenH)
@@ -261,13 +133,14 @@ class MapRenderer {
 
     /** 绘制地图要素层（桌面版 Z 序：Waters→DepthPolys→Land→Countries→Cities→Border→Misc→标注） */
     fun drawPolygons(canvas: Canvas, camera: Camera, canvasW: Int, canvasH: Int) {
+        val p = parser
         // 水域名（浅蓝半透明文字）
         val waterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(160, 70, 120, 180)
             textSize = 14f
             isFakeBoldText = true
         }
-        for ((text, x, y) in waterLabels) {
+        for ((text, x, y) in p.waterLabels) {
             val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
             if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
                 canvas.drawText(text, sx, sy, waterPaint)
@@ -282,8 +155,8 @@ class MapRenderer {
             Color.argb(120, 85, 145, 195),
             Color.argb(140, 50, 115, 180)
         )
-        depthPolys.forEach { (path, lvl) ->
-            val sp = screenPath(path, camera, canvasW, canvasH)
+        for ((pts, lvl) in p.depthPolys) {
+            val sp = screenPath(pts, camera, canvasW, canvasH)
             if (sp != null) {
                 canvas.drawPath(sp, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = depthColors[lvl % depthColors.size]
@@ -307,21 +180,21 @@ class MapRenderer {
             Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(80, 200, 180, 60); style = Paint.Style.FILL }
         )
 
-        for (path in landPaths) {
-            val sp = screenPath(path, camera, canvasW, canvasH)
+        for (pts in p.landPolys) {
+            val sp = screenPath(pts, camera, canvasW, canvasH)
             if (sp != null) {
                 canvas.drawPath(sp, landPaint)
                 canvas.drawPath(sp, landStroke)
             }
         }
-        // 国界线（红色虚线风格描边）
+        // 国界线（红色描边）
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(200, 180, 60, 60)
             style = Paint.Style.STROKE
             strokeWidth = 1.5f
         }
-        for (path in borderPaths) {
-            val sp = screenPath(path, camera, canvasW, canvasH)
+        for (pts in p.borderPolys) {
+            val sp = screenPath(pts, camera, canvasW, canvasH)
             if (sp != null) canvas.drawPath(sp, borderPaint)
         }
         // 国家名
@@ -330,7 +203,7 @@ class MapRenderer {
             textSize = 13f
             isFakeBoldText = true
         }
-        for ((text, x, y) in countryLabels) {
+        for ((text, x, y) in p.countryLabels) {
             val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
             if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
                 canvas.drawText(text, sx, sy, countryPaint)
@@ -341,14 +214,14 @@ class MapRenderer {
             color = Color.argb(200, 40, 40, 40)
             textSize = 11f
         }
-        for ((text, x, y) in cityLabels) {
+        for ((text, x, y) in p.cityLabels) {
             val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
             if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
                 canvas.drawText(text, sx + 3f, sy + 3f, cityPaint)
             }
         }
-        miscPaths.forEach { (path, idx) ->
-            val sp = screenPath(path, camera, canvasW, canvasH)
+        for ((pts, idx) in p.miscPolys) {
+            val sp = screenPath(pts, camera, canvasW, canvasH)
             if (sp != null) {
                 canvas.drawPath(sp, miscPaints[idx % miscPaints.size])
             }
@@ -358,18 +231,18 @@ class MapRenderer {
             color = Color.argb(200, 60, 60, 60)
             textSize = 12f
         }
-        for ((text, x, y) in labels) {
+        for ((text, x, y) in p.labels) {
             val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
             if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
                 canvas.drawText(text, sx + 4f, sy - 4f, labelPaint)
             }
         }
         // 地图边界框（桌面版 DrawMapBoundary）
-        if (hasBoundary) {
-            val w = boundaryWidth * 10
-            val h = boundaryHeight * 10
-            val (x0, y0) = camera.worldToScreen(mapWorldMinX, mapWorldMinY, canvasW, canvasH)
-            val (x1, y1) = camera.worldToScreen(mapWorldMinX + w, mapWorldMinY + h, canvasW, canvasH)
+        if (p.hasBoundary) {
+            val w = p.boundaryWidth * 10
+            val h = p.boundaryHeight * 10
+            val (x0, y0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY, canvasW, canvasH)
+            val (x1, y1) = camera.worldToScreen(p.mapWorldMinX + w, p.mapWorldMinY + h, canvasW, canvasH)
             val rect = android.graphics.RectF(x0, y0, x1, y1)
             canvas.drawRect(rect.left, rect.top, rect.right, rect.bottom, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.argb(220, 120, 60, 60)
@@ -379,21 +252,20 @@ class MapRenderer {
         }
     }
 
-    /** 世界坐标 Path → 屏幕坐标 Path（跳过视口外的大块） */
-    private fun screenPath(worldPath: Path, camera: Camera, w: Int, h: Int): Path? {
+    /** 世界坐标点列表 → 屏幕 Path（跳过视口外大块；大路径降采样） */
+    private fun screenPath(pts: List<Pair<Long, Long>>, camera: Camera, w: Int, h: Int): Path? {
+        if (pts.isEmpty()) return null
         val sp = Path()
-        val approx = android.graphics.PathMeasure(worldPath, false)
-        val len = approx.length
-        val step = 2000f  // 采样步长（世界单位），大路径降采样
-        val n = ((len / step).toInt() + 1).coerceAtMost(2000)
         var inView = false
-        for (i in 0..n) {
-            val dist = len * i / n.toFloat()
-            val pts = FloatArray(2)
-            approx.getPosTan(dist, pts, null)
-            val (sx, sy) = camera.worldToScreen(pts[0].toLong(), pts[1].toLong(), w, h)
+        val n = pts.size
+        // 大路径（>2000 点）降采样步长
+        val step = if (n > 2000) n / 2000 else 1
+        var first = true
+        for (i in pts.indices step step) {
+            val (wx, wy) = pts[i]
+            val (sx, sy) = camera.worldToScreen(wx, wy, w, h)
             if (sx in -1000f..w + 1000f && sy in -1000f..h + 1000f) inView = true
-            if (i == 0) sp.moveTo(sx, sy) else sp.lineTo(sx, sy)
+            if (first) { sp.moveTo(sx, sy); first = false } else sp.lineTo(sx, sy)
         }
         sp.close()
         return if (inView) sp else null
@@ -403,7 +275,4 @@ class MapRenderer {
         bitmap?.recycle()
         bitmap = null
     }
-
-    /** 待加载背景图文件名（官方配置） */
-    var pendingBackgroundName: String? = null
 }

@@ -5,6 +5,23 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.0] - 2026-08-08
+
+Phase 1 架构重构（MVVM + 分层 + 渲染层拆分）。
+
+### 重构
+- **GameViewModel 状态集中**：新增 ui/GameViewModel.kt，持有全部 UI 状态（场景/选中/编辑/回放/测量/弹窗）+ 所有业务操作入口（Do/Undo/Next/编辑/复制/护航队/保存/导出/Range 三选/回放控制）；revision 显式版本号替代旧 turnTick hack（收敛到一处、可追踪）
+- **MainActivity 瘦身**：581 → 220 行，只保留 SAF 文件选择注册 + Compose 组合 + 事件转发；业务逻辑全部移入 ViewModel
+- **渲染层拆分**：新增 MapDataParser（纯 Kotlin，JSON → 点列表数据），MapRenderer 改为纯绘制薄壳（android.graphics）；新增 CameraMath（纯数学视口变换），Camera 只做 Compose snapshot 状态包装
+- **跨配置保留**：camera/mapRenderer 移入 ViewModel，旋转屏幕不丢视野与已加载地图
+
+### 新增
+- JUnit：MapDataParserTest（5：BoundaryRect ×10/多边形/标注/非法 JSON）+ CameraMathTest（5：坐标往返/平移/锚点缩放/fitBounds/缩放钳制），共 56 测试全过（此前 46）
+
+### 其他
+- scripts/setup-toolchain.sh：沙箱环境重建脚本（JDK 17 + Android SDK 装入 workspace/toolchain 持久目录，防网关重启丢失；gradle.properties 自动追加省内存配置）
+- **构建环境最省资源方案**：in-process Kotlin 编译（不启 daemon，省 ~600MB）+ 单 worker + Xmx768m，3.4GB 内存沙箱下 2m31s 构建成功（此前频繁 OOM）
+
 ## [0.2.2] - 2026-08-08
 
 Phase 0 确定性 bug 修复（全项目审阅后执行）。
