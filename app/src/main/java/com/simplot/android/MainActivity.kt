@@ -120,7 +120,15 @@ class MainActivity : ComponentActivity() {
                         camera = vm.camera,
                         mapRenderer = vm.mapRenderer,
                         selectedUnitId = vm.selectedUnitId,
-                        onSelect = { vm.selectedUnitId = it },
+                        onSelect = { id ->
+                            vm.selectedUnitId = id
+                            // 修复 A：轻点选中单位即退出测量模式（用户可直接看 ② 辅助线）；轻点空白不退出
+                            // 修复 B：退出（无论按钮还是选中）即清除测量线，语义一致
+                            if (id != null && vm.measureMode) {
+                                vm.measureMode = false
+                                vm.clearMeasures()
+                            }
+                        },
                         onLongPress = { vm.editUnit = it },
                         replayFrame = if (replaying) vm.replayTimeline[vm.replayIndex] else null,
                         tick = vm.revision,
@@ -222,7 +230,10 @@ class MainActivity : ComponentActivity() {
             if (vm.file == null) return@Button
             if (vm.replayTimeline.isNotEmpty()) { vm.toast("回放中不可测量"); return@Button }
             vm.measureMode = !vm.measureMode
-            if (vm.measureMode) vm.toast("测量模式：拖动画线，松手结束") else vm.selectedUnitId = null
+            if (vm.measureMode) vm.toast("测量模式：拖动画线，轻点选中单位；退出即清除测量线") else {
+                vm.selectedUnitId = null
+                vm.clearMeasures()  // 修复 B：退出测量模式清除全部测量线
+            }
         }) { Text(if (vm.measureMode) "退出测量" else "测量") }
         Button(onClick = {
             if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可作参考"); return@Button }

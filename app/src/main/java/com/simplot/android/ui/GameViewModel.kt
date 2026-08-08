@@ -353,11 +353,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         return prefix + (max + 1).toString().padStart(3, '0')
     }
 
-    /** 测量完成回调：记录测量线 + 关闭测量模式 */
+    /** 测量完成回调：记录测量线（不自动退出测量模式，可连续画多条对照；退出由按钮/选中单位触发） */
     fun onMeasureComplete(start: Pair<Long, Long>, end: Pair<Long, Long>) {
         measureLog.add(start to end)
-        measureMode = false
+        // 修复 B：画完不自动退出测量模式（用户可连续画多条对照）；由「退出测量」按钮或选中单位时退出
         toast("已记录测量线 ${measureLog.size} 条")
+    }
+
+    /** 清除全部已保存测量线（退出测量模式时调用，修复 B） */
+    fun clearMeasures() {
+        measureLog.clear()
     }
 
     /** 导出测量 CSV（桌面版 Measurement CSV：TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI/Yards/Meters） */

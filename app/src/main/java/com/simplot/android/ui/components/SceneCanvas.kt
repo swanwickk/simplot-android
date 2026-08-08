@@ -1,9 +1,11 @@
 package com.simplot.android.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -97,28 +99,44 @@ fun SceneCanvas(
             .pointerInput(file, measureMode) {
                 if (replaying) return@pointerInput   // 回放模式下不响应点选
                 if (measureMode) {
-                    // 测量模式：按下=起点，拖拽=延伸，抬起=完成（桌面版 AddNewMeasure/ExtendMeasure）
-                    detectDragGestures(
-                        onDragStart = { pos ->
-                            val (wx, wy) = camera.screenToWorld(pos.x, pos.y, size.width, size.height)
-                            measureStart = wx to wy
-                            measureEnd = wx to wy
-                        },
-                        onDrag = { change, _ ->
+                    // 测量模式（修复 A）：awaitEachGesture 手动实现，轻点（无位移）= 选中单位，拖拽 = 画线。
+                    // detectDragGestures 轻点不触发任何回调 → 单位无法选中；此处两手势并存。
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        var isDrag = false
+                        var start: Pair<Long, Long>? = null
+                        var last: Pair<Long, Long>? = null
+                        // drag() 内部已按 touchSlop 过滤：位移超过阈值后才回调；松手返回是否成拖
+                        // drag() 返回 Boolean：手势正常结束=true，系统取消（如来电打断）=false（N1 修复）
+                        val completed = drag(down.id) { change ->
                             val (wx, wy) = camera.screenToWorld(change.position.x, change.position.y, size.width, size.height)
-                            measureEnd = wx to wy
-                        },
-                        onDragEnd = {
-                            val s = measureStart
-                            val e = measureEnd
-                            measureStart = null
-                            measureEnd = null
-                            if (s != null && e != null) onMeasureDone?.invoke(s, e)
-                        },
-                        onDragCancel = {
-                            measureStart = null; measureEnd = null
+                            if (!isDrag) {
+                                val dx = change.position.x - down.position.x
+                                val dy = change.position.y - down.position.y
+                                if (dx * dx + dy * dy >= viewConfiguration.touchSlop * viewConfiguration.touchSlop) {
+                                    isDrag = true
+                                    val (sx, sy) = camera.screenToWorld(down.position.x, down.position.y, size.width, size.height)
+                                    start = sx to sy
+                                    measureStart = start
+                                }
+                            }
+                            if (isDrag) {
+                                change.consume()
+                                last = wx to wy
+                                measureEnd = last
+                            }
                         }
-                    )
+                        if (!isDrag) {
+                            // 轻点：选中单位（不 consume；空白则 hit=null → onSelect(null) 取消选中）
+                            val hit = hitTest(file.units, camera, down.position, size.width.toInt(), size.height.toInt())
+                            onSelect(hit?.idNum)
+                        } else if (completed && start != null && last != null) {
+                            // 仅在手势正常完成（非取消）时记录测量线，避免半条线（N1）
+                            onMeasureDone?.invoke(start!!, last!!)
+                        }
+                        measureStart = null
+                        measureEnd = null
+                    }
                 } else {
                     detectTapGestures(
                         onTap = { pos ->
@@ -189,8 +207,11 @@ fun SceneCanvas(
         // 测量线（桌面版 Measurement）绘制顺序：已保存留存线 → 点选单位距离辅助线 → 拖拽中临时线
         val nc = drawContext.canvas.nativeCanvas
         // ① 已保存测量线（松手后留存，淡色细线；draw 阶段读快照列表 → 自动重绘）
-        for (m in savedMeasures) {
-            drawMeasureLine(nc, camera, w, h, m.first, m.second, saved = true)
+        // 修复 B：仅测量模式内绘制留存线；退出测量模式即清除（MainActivity 调 clearMeasures + 此条件双保险）
+        if (measureMode) {
+            for (m in savedMeasures) {
+                drawMeasureLine(nc, camera, w, h, m.first, m.second, saved = true)
+            }
         }
         // ② 点选单位到其它单位的距离/方位辅助线（灰线 + 中点标签）
         val ud = unitDistances
