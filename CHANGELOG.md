@@ -5,6 +5,22 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.1] - 2026-08-08
+
+Phase 2 引擎补全 + Phase 3 渲染交互增强。
+
+### 修复
+- **运动命令导出格式对齐桌面版**：反汇编确认 BuildUnitArray 结构 {File, Units:[{IdNum, Waypoints}]}，Waypoints 用标准 WaypointToJson 12 键；此前自创 {Units:[{Name,Side,X,Y,...}]} 格式不兼容
+- **回放性能 O(n·m·parse)**：positionAt 每帧对每单位每轨迹点重复 TimeUtil.parse → 预解析轨迹时间戳 + 二分查找最后已知位置，大场景回放流畅
+
+### 新增
+- **编队移动三模式**（桌面版 Formations.Movement.DoMove 分派）：RelativeToCompass（罗盘方位）/ RelativeToCourse（相对编队航向，转向跟随）/ Column（纵队排中心后方，间隔递增）；Unit 新增 FormationType 字段（存档互通）
+- **符号风格切换**（桌面版玩家设置 NTDS/CWS）：顶部按钮切换；CWS 为填充式符号（水面实心圆、飞机实心三角等，对齐 CwsSymbols color_filled 语义）
+- **测量 CSV 导出**（桌面版 Measurement CSV）：TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI/Yards/Meters；测量线累积记录 + 导出按钮
+
+### 其他
+- 58 测试全过（新增编队 Course/Column 2 个）
+
 ## [0.3.0] - 2026-08-08
 
 Phase 1 架构重构（MVVM + 分层 + 渲染层拆分）。

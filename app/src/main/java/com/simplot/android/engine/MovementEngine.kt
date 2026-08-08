@@ -87,11 +87,20 @@ object MovementEngine {
     }
 
     /**
-     * 编队移动（桌面版 MoveCompassFormation，反汇编确认）：
-     * 对每个非中心成员，位置 = 中心单位位置 + FormationDistance × (Sin/Cos FormationBearing)。
-     * ⚠️ FormationDistance 单位 = **文件单位**（X/Y 的 ×100000 海里定点，Double 原样使用，
-     * 直接与中心坐标相加；不是海里、不需要乘 NMI_SCALE）。
-     * 中心判定：IsFormationCenter，或同 FormationName 编队中第一个单位（无显式中心时）。
+     * 编队移动（桌面版 Formations.Movement.DoMove 分派三模式，反汇编确认）：
+     *
+     * 1. RelativeToCompass（罗盘方位）：
+     *    位置 = 中心 + FormationDistance × (Sin/Cos FormationBearing)
+     *    —— bearing 为绝对罗盘角（MoveCompassFormation 用 ConvertToRadians + Sin/Cos）
+     * 2. RelativeToCourse（相对航向）：
+     *    位置 = 中心 + Distance × (Sin/Cos (中心航向 + bearing))
+     *    —— bearing 相对编队航向，编队转向时成员跟随旋转（MoveCourseFormation 同样 ConvertToRadians）
+     * 3. Column（纵队）：
+     *    成员排在中心正后方（沿编队航向反向），距离 = 成员序号 × Distance
+     *    （MoveColumnFormation 不用 ConvertToRadians，按列间距排列）
+     *
+     * ⚠️ FormationDistance 单位 = **文件单位**（×100000 海里定点，与中心坐标直接相加）。
+     * 中心判定：IsFormationCenter，或同 FormationName 编队中第一个单位。
      */
     private fun moveFormations(units: MutableList<Unit>) {
         // 按 FormationName 分组；中心单位（IsFormationCenter）也要纳入分组，否则找不到中心
@@ -101,13 +110,34 @@ object MovementEngine {
             val center = members.firstOrNull { it.isFormationCenter }
                 ?: members.firstOrNull() ?: continue
             val centerId = center.idNum
+            val type = center.formationType.ifBlank { "RelativeToCompass" }
+            // 纵队：中心后方成员按序号排列
+            var colIdx = 1
             for (m in members) {
                 if (m.idNum == centerId || m.isFormationCenter) continue
                 if (m.isNewThisTurn) continue
-                val bearingRad = Math.toRadians(m.formationBearing.toDouble() / 1000.0)
-                val distFile = m.formationDistance.toDouble()   // 文件单位（海里×100000）
-                m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
-                m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
+                when (type) {
+                    "RelativeToCourse" -> {
+                        val bearingRad = Math.toRadians((m.formationBearing.toDouble() / 1000.0) + center.courseDeg())
+                        val distFile = m.formationDistance.toDouble()
+                        m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
+                        m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
+                    }
+                    "Column" -> {
+                        // 纵队：沿中心航向反方向，间隔递增（第一成员 Distance，第二 2×Distance…）
+                        val bearingRad = Math.toRadians(center.courseDeg() + 180.0)
+                        val distFile = m.formationDistance.toDouble() * colIdx
+                        m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
+                        m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
+                        colIdx++
+                    }
+                    else -> {  // RelativeToCompass
+                        val bearingRad = Math.toRadians(m.formationBearing.toDouble() / 1000.0)
+                        val distFile = m.formationDistance.toDouble()
+                        m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
+                        m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
+                    }
+                }
             }
         }
     }

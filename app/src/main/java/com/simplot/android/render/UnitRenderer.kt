@@ -7,9 +7,16 @@ import android.graphics.Path
 import com.simplot.android.data.model.Unit
 
 /**
- * 单位军标渲染器：按阵营着色，支持水面/潜艇/飞机/岸上四种基础符号（NTDS 风格简化版）
+ * 单位军标渲染器：按阵营着色，支持水面/潜艇/飞机/岸上四种基础符号。
+ *
+ * 符号风格（桌面版 SymbolGenerator，玩家设置选择）：
+ * - NTDS（默认）：描边符号（水面圆+船头线、飞机三角、潜艇椭圆、岸上方形）
+ * - CWS：填充符号（水面实心圆点、飞机实心三角、潜艇实心椭圆、岸上实心方块）
+ *   —— 对齐桌面版 CwsSymbols color_filled 变体语义
  */
 object UnitRenderer {
+
+    enum class SymbolStyle { NTDS, CWS }
 
     private val sideColors = mapOf(
         "Blue" to Color.rgb(0, 90, 200),
@@ -20,7 +27,7 @@ object UnitRenderer {
 
     fun colorOf(side: String): Int = sideColors[side] ?: Color.rgb(90, 90, 90)
 
-    fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false) {
+    fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false, symbolStyle: SymbolStyle = SymbolStyle.NTDS) {
         // 速度领导线（桌面版 SpeedLeaders.Draw）：沿航向向前，长度与航速成比例
         if (u.speedKnots() > 0) {
             val leaderLen = (u.speedKnots() * 2.2).coerceAtLeast(10.0).coerceAtMost(90.0).toFloat()
@@ -47,6 +54,7 @@ object UnitRenderer {
         }
 
         val r = sizePx / 2
+        val cws = symbolStyle == SymbolStyle.CWS
         when {
             u.isAircraft() -> {
                 // 飞机：三角翼符号
@@ -57,21 +65,28 @@ object UnitRenderer {
                     close()
                 }
                 canvas.drawPath(path, stroke)
+                if (cws) canvas.drawPath(path, fill)   // CWS：填充
             }
             u.isSubmarine() -> {
                 // 潜艇：横椭圆 + 中线
                 canvas.drawOval(sx - r * 1.3f, sy - r * 0.7f, sx + r * 1.3f, sy + r * 0.7f, stroke)
                 canvas.drawLine(sx - r * 1.3f, sy, sx + r * 1.3f, sy, stroke)
+                if (cws) canvas.drawOval(sx - r * 1.3f, sy - r * 0.7f, sx + r * 1.3f, sy + r * 0.7f, fill)
             }
             u.unitType.equals("Airfield", true) || u.idNum.startsWith("L") -> {
                 // 岸上设施：方块
                 canvas.drawRect(sx - r, sy - r, sx + r, sy + r, stroke)
+                if (cws) canvas.drawRect(sx - r, sy - r, sx + r, sy + r, fill)
             }
             else -> {
-                // 水面舰艇：圆（北向船头线）
+                // 水面舰艇：圆（北向船头线）；CWS 为实心圆点
                 canvas.drawCircle(sx, sy, r, stroke)
                 canvas.drawLine(sx, sy - r, sx, sy + r * 0.6f, stroke)
-                canvas.drawCircle(sx, sy, r * 0.35f, fill)
+                if (cws) {
+                    canvas.drawCircle(sx, sy, r, fill)
+                } else {
+                    canvas.drawCircle(sx, sy, r * 0.35f, fill)
+                }
             }
         }
 

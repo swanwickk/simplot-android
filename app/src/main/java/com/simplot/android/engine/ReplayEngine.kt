@@ -13,6 +13,9 @@ import java.time.LocalDateTime
  *
  * 时间线：收集所有轨迹点时间 → 排序去重 → 每一帧记录各单位位置。
  * 回放时按时间顺序切换帧，模拟桌面版 Play / Back / Forward / Pause。
+ *
+ * ⚠️ 性能（Phase 3 优化）：轨迹点时间戳预解析为 LocalDateTime 一次，
+ * 帧构建用双指针维护"每单位最后已知位置"，避免 O(帧×点×parse)。
  */
 object ReplayEngine {
 
@@ -30,50 +33,71 @@ object ReplayEngine {
         val y: Long
     )
 
+    /** 预解析轨迹点：时间戳 → LocalDateTime（避免回放中重复 parse） */
+    private class TrackPoint(
+        val time: LocalDateTime,
+        val x: Long,
+        val y: Long
+    )
+
     /**
      * 从存档重建回放时间线。
      * @return 按时间升序的帧列表；空轨迹/无时间数据的单位仅出现在最后（当前位置）。
      */
     fun buildTimeline(file: ScenarioFile): List<Frame> {
-        // 收集所有时间点
+        // 收集所有时间点（字符串格式即字典序=时间序）
         val times = sortedSetOf<String>()
         for (u in file.units) {
             for (wp in u.pastWaypointArray) {
                 if (wp.positionTime.isNotBlank()) times.add(wp.positionTime)
             }
         }
-        // 当前时间帧（单位当前位置对应的时刻，必须作为末帧）
         times.add(file.time.currentPositionTime)
         if (times.isEmpty()) return emptyList()
 
+        // 每单位预解析轨迹（按时间升序，字符串字典序即时间序）
+        val tracks = file.units.associateWith { u ->
+            u.pastWaypointArray
+                .filter { it.positionTime.isNotBlank() }
+                .sortedBy { it.positionTime }
+                .map { TrackPoint(TimeUtil.parse(it.positionTime), it.x, it.y) }
+        }
+        val currentTime = TimeUtil.parse(file.time.currentPositionTime)
+
         val list = times.toList()
         return list.map { t ->
+            val target = TimeUtil.parse(t)
             val positions = mutableMapOf<String, UnitPos>()
             for (u in file.units) {
-                // 该时刻的单位位置：时间戳 <= t 的最后一个轨迹点；否则当前位置
-                val at = positionAt(u, t, file)
-                positions[u.idNum] = at
+                positions[u.idNum] = positionAt(u, tracks[u] ?: emptyList(), target, currentTime)
             }
             Frame(time = t, positions = positions)
         }
     }
 
-    /** 单位在指定时刻的位置（按轨迹点时间戳插值到"最后已知"） */
-    private fun positionAt(u: Unit, t: String, file: ScenarioFile): UnitPos {
-        // t 已到当前时间 → 当前位置（最后轨迹点之后单位已移动）
-        if (t >= file.time.currentPositionTime) {
+    /** 单位在指定时刻的位置：二分查找 ≤ target 的最后一个轨迹点；无则当前位置 */
+    private fun positionAt(u: Unit, track: List<TrackPoint>, target: LocalDateTime, currentTime: LocalDateTime): UnitPos {
+        // 已到当前时间 → 当前位置（轨迹点之后单位已移动）
+        if (!target.isBefore(currentTime)) {
             return UnitPos(u.idNum, u.side, u.name, u.x, u.y)
         }
-        val target = TimeUtil.parse(t)
-        var best: UnitPos? = null
-        for (wp in u.pastWaypointArray) {
-            if (wp.positionTime.isBlank()) continue
-            val wt = TimeUtil.parse(wp.positionTime)
-            if (!wt.isAfter(target)) {
-                best = UnitPos(u.idNum, u.side, u.name, wp.x, wp.y)
+        if (track.isEmpty()) return UnitPos(u.idNum, u.side, u.name, u.x, u.y)
+        // 二分：最后一个 time <= target 的点
+        var lo = 0
+        var hi = track.size - 1
+        var best: TrackPoint? = null
+        while (lo <= hi) {
+            val mid = (lo + hi) / 2
+            val p = track[mid]
+            if (!p.time.isAfter(target)) {
+                best = p
+                lo = mid + 1
+            } else {
+                hi = mid - 1
             }
         }
-        return best ?: UnitPos(u.idNum, u.side, u.name, u.x, u.y)
+        val b = best ?: return UnitPos(u.idNum, u.side, u.name, u.x, u.y)
+        return UnitPos(u.idNum, u.side, u.name, b.x, b.y)
     }
 
     /** 时间字符串转可排序键（字符串格式即字典序一致） */

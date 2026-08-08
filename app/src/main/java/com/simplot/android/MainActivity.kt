@@ -62,6 +62,9 @@ class MainActivity : ComponentActivity() {
     private val exportDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { vm?.exportMovementOrders(it) }
     }
+    private val exportCsvDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { vm?.exportMeasureCsv(it) }
+    }
     private val pickMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm?.loadMapFile(it) }
     }
@@ -119,7 +122,8 @@ class MainActivity : ComponentActivity() {
                         replayFrame = if (replaying) vm.replayTimeline[vm.replayIndex] else null,
                         tick = vm.revision,
                         measureMode = vm.measureMode && !replaying,
-                        onMeasureDone = { vm.measureMode = false },
+                        onMeasureDone = { start, end -> vm.onMeasureComplete(start, end) },
+                        symbolStyle = vm.symbolStyle,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
                     if (replaying) {
@@ -219,6 +223,11 @@ class MainActivity : ComponentActivity() {
             vm.showCalcPosition = true
         }) { Text("计算") }
         Button(onClick = { vm.createConvoy() }) { Text("护航队") }
+        Button(onClick = { vm.toggleSymbolStyle() }) { Text(if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "CWS" else "NTDS") }
+        Button(onClick = {
+            if (vm.measureLog.isEmpty()) { vm.toast("无测量记录，先测量再导出"); return@Button }
+            exportCsvDir.launch(null)
+        }) { Text("导出CSV") }
         Button(onClick = {
             if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可导出"); return@Button }
             exportDir.launch(null)

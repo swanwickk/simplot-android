@@ -511,4 +511,48 @@ class ReplayTest {
         assertEquals(60000L, f.units[0].x)
         assertEquals(0, f.units[0].range)   // Range 保持 0
     }
+
+    @Test
+    fun `formation course mode adds center heading to bearing`() {
+        // RelativeToCourse：bearing 相对编队航向；中心航向 90°（正东），成员 bearing 0° → 实际 90°
+        val center = unit("S001", 0, 0).apply {
+            isFormationCenter = true; formationName = "TF"
+            formationType = "RelativeToCourse"
+            setCourse(90.0)
+        }
+        val member = unit("S002", 0, 0).apply {
+            isInFormation = true; formationName = "TF"
+            formationBearing = 0; formationDistance = 100000
+        }
+        val f = scenario(listOf(center, member))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        // 90° → dx=100000, dy≈0
+        assertEquals(100000L, f.units[1].x)
+        assertTrue(kotlin.math.abs(f.units[1].y) < 100L)
+    }
+
+    @Test
+    fun `formation column mode lines up behind center`() {
+        // Column：成员排在中心正后方（航向反方向）；中心航向 0°（正北）→ 成员在正南
+        val center = unit("S001", 0, 0).apply {
+            isFormationCenter = true; formationName = "Col"
+            formationType = "Column"
+            setCourse(0.0)
+        }
+        val m1 = unit("S002", 0, 0).apply {
+            isInFormation = true; formationName = "Col"
+            formationDistance = 100000
+        }
+        val m2 = unit("S003", 0, 0).apply {
+            isInFormation = true; formationName = "Col"
+            formationDistance = 100000
+        }
+        val f = scenario(listOf(center, m1, m2))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        // 航向 0° 反向 = 180°（正南）：m1 在 (0,-100000)，m2 在 (0,-200000)
+        assertEquals(0L, f.units[1].x)
+        assertEquals(-100000L, f.units[1].y)
+        assertEquals(0L, f.units[2].x)
+        assertEquals(-200000L, f.units[2].y)
+    }
 }

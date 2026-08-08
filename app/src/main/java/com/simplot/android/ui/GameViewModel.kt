@@ -49,6 +49,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var measureMode by mutableStateOf(false)
     var showCalcPosition by mutableStateOf(false)
 
+    /** 已完成的测量（桌面版 Measurement，用于 CSV 导出）：起终点世界坐标 */
+    val measureLog = mutableListOf<Pair<Pair<Long, Long>, Pair<Long, Long>>>()
+
+    /** 符号风格（桌面版玩家设置：NTDS / CWS） */
+    var symbolStyle by mutableStateOf(com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS)
+
     /** 显式版本号：任何场景变更后自增，驱动 Compose 重组（替代 turnTick） */
     var revision by mutableStateOf(0)
         private set
@@ -330,6 +336,49 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             u.idNum.removePrefix(prefix).toIntOrNull()?.let { if (it > max) max = it }
         }
         return prefix + (max + 1).toString().padStart(3, '0')
+    }
+
+    /** 测量完成回调：记录测量线 + 关闭测量模式 */
+    fun onMeasureComplete(start: Pair<Long, Long>, end: Pair<Long, Long>) {
+        measureLog.add(start to end)
+        measureMode = false
+        toast("已记录测量线 ${measureLog.size} 条")
+    }
+
+    /** 导出测量 CSV（桌面版 Measurement CSV：TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI/Yards/Meters） */
+    fun exportMeasureCsv(directory: Uri) {
+        if (measureLog.isEmpty()) {
+            toast("无测量记录")
+            return
+        }
+        try {
+            val sb = StringBuilder()
+            sb.append("TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI,Range Yards,Range Meters\n")
+            measureLog.forEachIndexed { i, (start, end) ->
+                val bearing = CoordUtil.bearingDeg(start.first, start.second, end.first, end.second)
+                val distNm = CoordUtil.distanceNm(start.first, start.second, end.first, end.second)
+                val distYards = distNm * CoordUtil.YARDS_PER_NMI
+                val distMeters = distNm * 1852.0
+                sb.append("M${i + 1},")
+                sb.append("${start.first},${start.second},")
+                sb.append("0,0,0,")
+                sb.append(String.format("%.1f,%.2f,%.1f,%.1f\n", bearing, distNm, distYards, distMeters))
+            }
+            val uri = repo.createFile(directory, "Measurements.csv", "text/csv")
+            repo.writeText(uri, sb.toString())
+            toast("已导出测量 CSV：${measureLog.size} 条")
+        } catch (e: Exception) {
+            toast("导出失败：${e.message}")
+        }
+    }
+
+    /** 切换符号风格 */
+    fun toggleSymbolStyle() {
+        symbolStyle = if (symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS)
+            com.simplot.android.render.UnitRenderer.SymbolStyle.CWS
+        else
+            com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
+        toast("符号风格：${symbolStyle}")
     }
 
     // ============ 弹窗 / 测量 ============

@@ -30,9 +30,10 @@ data class Unit(
     @SerializedName("IsActiveSonar") var isActiveSonar: Boolean = false,
     @SerializedName("IsInFormation") var isInFormation: Boolean = false,
     @SerializedName("IsFormationCenter") var isFormationCenter: Boolean = false,
-    @SerializedName("FormationBearing") var formationBearing: Int = 0,   // ×1000 定点（罗盘角）
+    @SerializedName("FormationBearing") var formationBearing: Int = 0,   // ×1000 定点（罗盘角；Course 模式为相对编队航向）
     @SerializedName("FormationDistance") var formationDistance: Int = 0,  // 文件单位（海里×100000，桌面版 Double 原样与中心坐标相加）
     @SerializedName("FormationName") var formationName: String = "",
+    @SerializedName("FormationType") var formationType: String = "RelativeToCompass",  // RelativeToCompass/Column/RelativeToCourse（桌面版 FormationTypes）
     @SerializedName("PositionTimeCreated") var positionTimeCreated: String = "",
     @SerializedName("PositionTimeDeleted") var positionTimeDeleted: String = "2999-12-31 00:00:00",
     @SerializedName("Speed") var speed: Int = 0,                    // 航速 ×1000

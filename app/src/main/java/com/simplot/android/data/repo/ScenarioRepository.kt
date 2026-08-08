@@ -110,37 +110,39 @@ class ScenarioRepository(private val context: Context) {
         writeBytes(uri, SpScnCodec.toScnFileBytes(JsonUtil.toCompactJson(data)))
     }
 
+    /** 在目录中创建文件（已存在则复用），返回 URI */
+    fun createFile(directory: Uri, name: String, mime: String = "application/octet-stream"): Uri {
+        return childOrCreate(directory, name)
+    }
+
+    /** 写入文本（覆盖） */
+    fun writeText(uri: Uri, text: String) {
+        writeBytes(uri, text.toByteArray(Charsets.UTF_8))
+    }
+
     /**
-     * 导出运动命令（桌面版 WindowExportOrders / MovementOrders）：
-     * "Movement - <玩家名>.json"，包含选中单位及其航路点。
-     * 格式：{Units: [{IdNum, Name, Side, X, Y, Speed, Course, Waypoints: [...]}]}
+     * 导出运动命令（桌面版 WindowExportOrders / MovementOrders，反汇编确认）：
+     * 文件名 "Movement - <玩家名>.json"，根结构 {File, Units}，每单位 {IdNum, Waypoints}，
+     * Waypoints 用标准 WaypointToJson 12 键格式（含 AltitudeDepth/AssignedAltDepth/Ascent/Descent/
+     * Number/IsTurnTime/PositionTime）。
+     * 对齐：BuildUnitArray 字符串 ['IdNum','Waypoints']，BuildWaypointArray 调 WaypointToJson。
      */
     fun exportMovementOrders(directory: Uri, playerName: String, units: List<com.simplot.android.data.model.Unit>) {
         val root = com.google.gson.JsonObject()
+        root.addProperty("File", "Referee")   // 桌面版根键（LoadMoveOrders 读取 File 判断格式）
         val arr = com.google.gson.JsonArray()
         units.forEach { u ->
             val o = com.google.gson.JsonObject()
             o.addProperty("IdNum", u.idNum)
-            o.addProperty("Name", u.name)
-            o.addProperty("Side", u.side)
-            o.addProperty("X", u.x)
-            o.addProperty("Y", u.y)
-            o.addProperty("Speed", u.speed)
-            o.addProperty("Course", u.course)
             val wps = com.google.gson.JsonArray()
-            u.futureWaypointArray.forEach { w ->
-                val wo = com.google.gson.JsonObject()
-                wo.addProperty("X", w.x); wo.addProperty("Y", w.y)
-                wo.addProperty("Speed", w.speed); wo.addProperty("Course", w.course)
-                wo.addProperty("Name", w.name)
-                wps.add(wo)
+            // 未来航路点 + 当前点（桌面版 BuildWaypointArray：WaypointToJson 标准 12 键）
+            (u.futureWaypointArray + u.pastWaypointArray).forEach { w ->
+                wps.add(com.simplot.android.data.codec.JsonUtil.gson.toJsonTree(w))
             }
             o.add("Waypoints", wps)
             arr.add(o)
         }
         root.add("Units", arr)
-        root.addProperty("PlayerName", playerName)
-        root.addProperty("Created", com.simplot.android.data.util.TimeUtil.now())
         val uri = childOrCreate(directory, "Movement - $playerName.json")
         writeBytes(uri, com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(root).toByteArray(Charsets.UTF_8))
     }

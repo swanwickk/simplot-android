@@ -45,7 +45,8 @@ fun SceneCanvas(
     replayFrame: ReplayEngine.Frame? = null,
     tick: Int = 0,
     measureMode: Boolean = false,
-    onMeasureDone: (() -> kotlin.Unit)? = null
+    onMeasureDone: ((start: Pair<Long, Long>, end: Pair<Long, Long>) -> kotlin.Unit)? = null,
+    symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
 ) {
     val replaying = replayFrame != null
     // 读取 tick 建立重组依赖：回合推进/编辑后重绘（file 引用不变）
@@ -97,7 +98,11 @@ fun SceneCanvas(
                             measureEnd = wx to wy
                         },
                         onDragEnd = {
-                            onMeasureDone?.invoke()
+                            val s = measureStart
+                            val e = measureEnd
+                            measureStart = null
+                            measureEnd = null
+                            if (s != null && e != null) onMeasureDone?.invoke(s, e)
                         },
                         onDragCancel = {
                             measureStart = null; measureEnd = null
@@ -153,7 +158,7 @@ fun SceneCanvas(
                 val (sx, sy) = camera.worldToScreen(pos.x, pos.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     val frameUnit = u.copy(x = pos.x, y = pos.y)
-                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy)
+                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, symbolStyle = symbolStyle)
                     drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy)
                 }
             }
@@ -161,7 +166,7 @@ fun SceneCanvas(
             for (u in file.units) {
                 val (sx, sy) = camera.worldToScreen(u.x, u.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
-                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy, selected = u.idNum == selectedUnitId)
+                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy, selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle)
                     drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy)
                 }
             }
