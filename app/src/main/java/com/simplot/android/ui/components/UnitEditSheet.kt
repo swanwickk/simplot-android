@@ -145,8 +145,8 @@ fun UnitEditSheet(
             Button(onClick = {
                 unit.setCourse(course.toDouble())
                 unit.setSpeed(speed.toDouble())
-                if (unit.isAircraft() && alt.isNotBlank()) unit.altitude = alt.toInt() * 1000
-                if (unit.isSubmarine() && depth.isNotBlank()) unit.depth = depth.toInt() * 1000
+                if (unit.isAircraft() && alt.isNotBlank()) unit.altitude = alt.toInt()
+                if (unit.isSubmarine() && depth.isNotBlank()) unit.depth = depth.toInt()
                 unit.textTags.tagName = showName
                 unit.textTags.tagCourseSpeed = showCS
                 unit.showSunk = sunk

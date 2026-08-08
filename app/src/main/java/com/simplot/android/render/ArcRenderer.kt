@@ -19,9 +19,9 @@ import com.simplot.android.data.model.Unit
  */
 object ArcRenderer {
 
-    /** VB 颜色 "&h00RRGGBB" → Android Color（不透明） */
+    /** VB 颜色 "&h00RRGGBB" → Android Color（不透明）；缺失时回退桌面版默认 黄色 0xFFFF00 */
     fun parseColor(vb: String?): Int {
-        if (vb == null) return Color.rgb(128, 128, 128)
+        if (vb == null) return Color.rgb(255, 255, 0)
         val hex = vb.removePrefix("&h").removePrefix("&H")
         return try {
             val v = hex.toLong(16)
@@ -30,7 +30,7 @@ object ArcRenderer {
             val b = (v and 0xFF).toInt()
             Color.rgb(r, g, b)
         } catch (e: Exception) {
-            Color.rgb(128, 128, 128)
+            Color.rgb(255, 255, 0)
         }
     }
 

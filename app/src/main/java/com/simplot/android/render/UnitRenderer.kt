@@ -85,6 +85,35 @@ object UnitRenderer {
             canvas.drawCircle(sx, sy, r + 5f, sel)
         }
 
+        // 主动传感器激活标记（桌面版 ActiveSensors.Draw）：雷达=黄色三角（右上），声纳=蓝色菱形（左上）
+        if (u.isActiveRadar) {
+            val rp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = Color.rgb(240, 200, 0)
+                style = Paint.Style.FILL
+            }
+            val tri = Path().apply {
+                moveTo(sx + r + 2f, sy - r - 6f)
+                lineTo(sx + r + 8f, sy - r - 10f)
+                lineTo(sx + r + 10f, sy - r - 3f)
+                close()
+            }
+            canvas.drawPath(tri, rp)
+        }
+        if (u.isActiveSonar) {
+            val sp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = Color.rgb(40, 140, 220)
+                style = Paint.Style.FILL
+            }
+            val dia = Path().apply {
+                moveTo(sx - r - 8f, sy - r - 8f)
+                lineTo(sx - r - 3f, sy - r - 11f)
+                lineTo(sx - r + 2f, sy - r - 8f)
+                lineTo(sx - r - 3f, sy - r - 5f)
+                close()
+            }
+            canvas.drawPath(dia, sp)
+        }
+
         // 沉没标记：叉
         if (u.showSunk) {
             val sunk = Paint(Paint.ANTI_ALIAS_FLAG).apply {

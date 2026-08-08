@@ -44,8 +44,8 @@ object MovementEngine {
         var speedDelta: Double? = null,     // 相对加减速（节，负数=减速）——加速X节写法
         var boost: Boolean = false,         // “提速”无数字 → 按能力表最大加速
         var decel: Boolean = false,         // “减速”无数字 → 按能力表最大减速
-        var newAltitude: Int? = null,       // 飞机新高度（米）
-        var newDepth: Int? = null,          // 潜艇新深度（米）
+        var newAltitude: Int? = null,       // 飞机新高度（米，原样存取）
+        var newDepth: Int? = null,          // 潜艇新深度（米，原样存取）
         var emergency: Boolean = false      // 急舵
     )
 
@@ -87,13 +87,15 @@ object MovementEngine {
     }
 
     /**
-     * 编队移动（桌面版 MoveCompassFormation）：
+     * 编队移动（桌面版 MoveCompassFormation，反汇编确认）：
      * 对每个非中心成员，位置 = 中心单位位置 + FormationDistance × (Sin/Cos FormationBearing)。
+     * ⚠️ FormationDistance 单位 = **文件单位**（X/Y 的 ×100000 海里定点，Double 原样使用，
+     * 直接与中心坐标相加；不是海里、不需要乘 NMI_SCALE）。
      * 中心判定：IsFormationCenter，或同 FormationName 编队中第一个单位（无显式中心时）。
      */
     private fun moveFormations(units: MutableList<Unit>) {
-        // 按 FormationName 分组；空名/未在编队跳过
-        val groups = units.filter { it.isInFormation && it.formationName.isNotBlank() }
+        // 按 FormationName 分组；中心单位（IsFormationCenter）也要纳入分组，否则找不到中心
+        val groups = units.filter { (it.isInFormation || it.isFormationCenter) && it.formationName.isNotBlank() }
             .groupBy { it.formationName }
         for ((name, members) in groups) {
             val center = members.firstOrNull { it.isFormationCenter }
@@ -103,7 +105,7 @@ object MovementEngine {
                 if (m.idNum == centerId || m.isFormationCenter) continue
                 if (m.isNewThisTurn) continue
                 val bearingRad = Math.toRadians(m.formationBearing.toDouble() / 1000.0)
-                val distFile = m.formationDistance.toDouble() * CoordUtil.NMI_SCALE
+                val distFile = m.formationDistance.toDouble()   // 文件单位（海里×100000）
                 m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
                 m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
             }
@@ -115,33 +117,42 @@ object MovementEngine {
 
     /**
      * 高度/深度引擎：向首个未来航路点指定的高度/深度趋近。
-     * - 目标 = waypoint.assignedAltDepth（×1000 定点米）
-     * - 速率 = waypoint.ascent/descent（×1000），为 0 时按单回合上限 180 米
-     * - 单回合最大变化 180000（= 180 米 × 1000，桌面版 180 常量）
+     *
+     * 桌面版语义（ChangeAltitude 反汇编确认）：
+     * - 目标 = waypoint.AssignedAltDepth（**实际米**，存档原样存取，无定点）
+     * - 速率 = waypoint.Ascent/Descent（米/回合）；运行时 ÷180 是 SmoothMove 每秒 tick 的换算
+     *   （默认回合 3 分钟 = 180 秒，每 tick 变化 = 速率/180，整回合累计 = 速率）
+     * - 我们 InstantMove 整回合一步 → 每回合变化 = min(速率, 距目标距离)
      */
     private fun applyAltitudeDepth(u: Unit) {
         val wp = u.futureWaypointArray.firstOrNull() ?: return
         if (u.altitude != null) {
-            val target = wp.assignedAltDepth * 1000L
-            val cur = u.altitude!!.toLong()
-            val rate = if (target > cur) (wp.ascent * 1000L).coerceAtLeast(180000L) else (wp.descent * 1000L).coerceAtLeast(180000L)
-            val step = minOf(rate, 180000L)
-            u.altitude = when {
-                target > cur -> minOf(target, cur + step)
-                target < cur -> maxOf(target, cur - step)
-                else -> cur
-            }.toInt()
+            val target = wp.assignedAltDepth.toLong()   // 米
+            val cur = u.altitude!!.toLong()             // 米
+            // 速率 = 米/回合；速率为 0 表示不调整（与桌面版 Ascent/Descent 语义一致）
+            val rate = if (target > cur) wp.ascent.toLong() else wp.descent.toLong()
+            if (rate > 0) {
+                val step = minOf(rate, kotlin.math.abs(target - cur))
+                u.altitude = when {
+                    target > cur -> (cur + step).toInt()
+                    target < cur -> (cur - step).toInt()
+                    else -> cur.toInt()
+                }
+            }
         }
         if (u.depth != null) {
-            val target = wp.assignedAltDepth * 1000L
-            val cur = u.depth!!.toLong()
-            val rate = if (target > cur) (wp.ascent * 1000L).coerceAtLeast(180000L) else (wp.descent * 1000L).coerceAtLeast(180000L)
-            val step = minOf(rate, 180000L)
-            u.depth = when {
-                target > cur -> minOf(target, cur + step)
-                target < cur -> maxOf(target, cur - step)
-                else -> cur
-            }.toInt()
+            val target = wp.assignedAltDepth.toLong()   // 米
+            val cur = u.depth!!.toLong()                // 米
+            // 深度：target>cur = 下潜 → descent（下潜速率）；target<cur = 上浮 → ascent（上浮速率）
+            val rate = if (target > cur) wp.descent.toLong() else wp.ascent.toLong()
+            if (rate > 0) {
+                val step = minOf(rate, kotlin.math.abs(target - cur))
+                u.depth = when {
+                    target > cur -> (cur + step).toInt()
+                    target < cur -> (cur - step).toInt()
+                    else -> cur.toInt()
+                }
+            }
         }
     }
 
@@ -225,16 +236,17 @@ object MovementEngine {
         }
         if (newSpeed < 0) newSpeed = 0.0
 
-        // 高度/深度
-        if (move?.newAltitude != null && u.altitude != null) u.altitude = move.newAltitude!! * 1000
-        if (move?.newDepth != null && u.depth != null) u.depth = move.newDepth!! * 1000
+        // 高度/深度（单位：米，桌面版原样存取）
+        if (move?.newAltitude != null && u.altitude != null) u.altitude = move.newAltitude!!
+        if (move?.newDepth != null && u.depth != null) u.depth = move.newDepth!!
 
         // 记录起点轨迹（移动前位置）——桌面版对象结构
         u.pastWaypointArray.add(makeWaypoint(u, curTime))
 
         // Range 限制：可移动海里数（-100000 = 无限制；0 = 已耗尽停止）
+        // ⚠️ ignoreRange（桌面版"继续移动"三选）→ 无视 Range 限制继续航行（C3 修复）
         var distNm = newSpeed * minutes / 60.0
-        if (u.range >= 0) {
+        if (u.range >= 0 && !u.ignoreRange) {
             if (distNm >= u.range) {
                 distNm = u.range.toDouble()   // 本回合耗尽剩余 Range
                 u.range = 0

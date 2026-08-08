@@ -343,4 +343,172 @@ class ReplayTest {
         assertEquals(1, tl.size)
         assertEquals(0L, tl[0].positions["S001"]!!.x)
     }
+
+    // ============ 高度/深度引擎（桌面版 ChangeAltitude/ChangeDepth，A1 修复） ============
+
+    /** 飞机：指定高度（米）+ 未来航路点目标高度/速率 */
+    private fun airUnit(id: String, altitudeM: Int, wpTargetM: Int, ascent: Int = 0, descent: Int = 0): Unit {
+        return Unit().apply {
+            this.idNum = id
+            side = "Blue"
+            name = id
+            this.altitude = altitudeM
+            if (wpTargetM != 0 || ascent != 0 || descent != 0) {
+                futureWaypointArray.add(
+                    com.simplot.android.data.model.Waypoint(
+                        x = 0, y = 0, altitudeDepth = altitudeM,
+                        assignedAltDepth = wpTargetM, ascent = ascent, descent = descent
+                    )
+                )
+            }
+        }
+    }
+
+    /** 潜艇：指定深度（米） */
+    private fun subUnit(id: String, depthM: Int, wpTargetM: Int, ascent: Int = 0, descent: Int = 0): Unit {
+        return Unit().apply {
+            this.idNum = id
+            side = "Blue"
+            name = id
+            this.depth = depthM
+            if (wpTargetM != 0 || ascent != 0 || descent != 0) {
+                futureWaypointArray.add(
+                    com.simplot.android.data.model.Waypoint(
+                        x = 0, y = 0, altitudeDepth = depthM,
+                        assignedAltDepth = wpTargetM, ascent = ascent, descent = descent
+                    )
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `altitude climbs toward waypoint target at ascent rate`() {
+        // 当前 1000 米 → 目标 3000 米，爬升速率 500 米/回合
+        val f = scenario(listOf(airUnit("A001", 1000, 3000, ascent = 500)))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(1500, f.units[0].altitude)
+    }
+
+    @Test
+    fun `altitude descends toward waypoint target at descent rate`() {
+        // 当前 3000 米 → 目标 1000 米，下降速率 800 米/回合
+        val f = scenario(listOf(airUnit("A001", 3000, 1000, descent = 800)))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(2200, f.units[0].altitude)
+    }
+
+    @Test
+    fun `altitude does not overshoot target`() {
+        // 当前 1000 → 目标 1200，速率 500 → 一步到位 1200
+        val f = scenario(listOf(airUnit("A001", 1000, 1200, ascent = 500)))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(1200, f.units[0].altitude)
+    }
+
+    @Test
+    fun `altitude unchanged when rate zero`() {
+        // 速率为 0 → 不调整（与桌面版 Ascent/Descent 语义一致）
+        val f = scenario(listOf(airUnit("A001", 1000, 3000)))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(1000, f.units[0].altitude)
+    }
+
+    @Test
+    fun `altitude is plain meters not scaled`() {
+        // A1 修复核心：Altitude 存档单位 = 实际米（无 ×1000 定点）
+        val u = Unit().apply { altitude = 10000; depth = 200 }
+        assertEquals(10000, u.altitudeMeters())
+        assertEquals(200, u.depthMeters())
+        // 序列化后应保持原值（无 ×1000）
+        val json = com.simplot.android.data.codec.JsonUtil.gson.toJson(u)
+        assertTrue(json.contains("\"Altitude\":10000"))
+        assertTrue(json.contains("\"Depth\":200"))
+    }
+
+    @Test
+    fun `depth ascends toward waypoint target`() {
+        // 当前 300 米 → 目标 100 米（上浮），上浮速率 100 米/回合
+        val f = scenario(listOf(subUnit("U001", 300, 100, ascent = 100)))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(200, f.units[0].depth)
+    }
+
+    // ============ 编队移动（桌面版 MoveCompassFormation，A2 修复） ============
+
+    @Test
+    fun `formation member positioned at bearing distance from center`() {
+        // 中心 (0,0)，成员在 90° 方位（正东）、距离 1 海里（文件单位 100000）
+        val center = unit("S001", 0, 0).apply { isFormationCenter = true; formationName = "Convoy" }
+        val member = unit("S002", 0, 0).apply {
+            isInFormation = true
+            formationName = "Convoy"
+            formationBearing = 90000      // 90°
+            formationDistance = 100000    // 1 海里 = 文件单位
+        }
+        val f = scenario(listOf(center, member))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        // 90° → dx=dist×sin(90°)=100000, dy=dist×cos(90°)=0 → 新位置 (100000, 0)
+        assertEquals(100000L, f.units[1].x)
+        assertEquals(0L, f.units[1].y)
+    }
+
+    @Test
+    fun `formation distance is file units not nautical miles`() {
+        // A2 核心：formationDistance 直接是文件单位（×100000 海里定点），不能乘 NMI_SCALE
+        val center = unit("S001", 0, 0).apply { isFormationCenter = true; formationName = "Convoy" }
+        val member = unit("S002", 0, 0).apply {
+            isInFormation = true
+            formationName = "Convoy"
+            formationBearing = 0          // 正北
+            formationDistance = 100000    // 1 海里
+        }
+        val f = scenario(listOf(center, member))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        // 0° → dx=0, dy=dist×cos(0°)=100000 → 新位置 (0, 100000)（北 1 海里，而不是 100000 海里外）
+        assertEquals(0L, f.units[1].x)
+        assertEquals(100000L, f.units[1].y)
+        assertTrue(f.units[1].x < 1_000_000L)   // 没有甩到 2000 海里外
+    }
+
+    // ============ Range 耗尽三选（桌面版 HasRangeRemaining，C3 修复） ============
+
+    /** 有限航程单位：12 节，Range=10 海里 */
+    private fun rangedUnit(id: String, rangeNm: Int, ignore: Boolean = false): Unit {
+        return unit(id, 0, 0).apply {
+            setSpeed(12.0)
+            setCourse(90.0)
+            range = rangeNm
+            ignoreRange = ignore
+        }
+    }
+
+    @Test
+    fun `range decreases with movement until exhausted`() {
+        // 12 节 × 3 分钟 = 0.6 海里/回合；Range 10 → 每回合扣 1（至少 1 海里），移动 0.6 海里
+        val f = scenario(listOf(rangedUnit("S001", 10)))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(9, f.units[0].range)
+        assertEquals(60000L, f.units[0].x)   // 0.6 海里 × 100000
+    }
+
+    @Test
+    fun `range exhausted stops movement`() {
+        // Range 0.5 海里，12 节×3 分钟 = 0.6 → 本回合耗尽，只走 0.5
+        val f = scenario(listOf(rangedUnit("S001", 0)))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(0, f.units[0].range)
+        assertEquals(0L, f.units[0].x)   // Range 0 → 不移动
+    }
+
+    @Test
+    fun `ignoreRange continues movement after exhaustion`() {
+        // C3 核心：选"继续移动"后 Range=0 仍正常航行（无视 Range 限制）
+        val u = rangedUnit("S001", 0, ignore = true)
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        // 12 节 × 3 分钟 = 0.6 海里 = 60000 文件单位
+        assertEquals(60000L, f.units[0].x)
+        assertEquals(0, f.units[0].range)   // Range 保持 0
+    }
 }

@@ -5,6 +5,21 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.2] - 2026-08-08
+
+Phase 0 确定性 bug 修复（全项目审阅后执行）。
+
+### 修复
+- **高度/深度单位制错误（A1，致命）**：模型把 Altitude/Depth 当"米×1000 定点"，但桌面版反汇编确认存档**原样存实际米**（JsonToUnit/UnitToJson 对高度字段直接 movsd，无换算；帮助文档 + TextTags 显示格式 `' m'` 佐证）。修正模型/引擎/编辑 UI 全链路，存档互通数值正确
+- **高度/深度引擎重写**：改为向航路点 AssignedAltDepth（米）按 Ascent/Descent 速率（米/回合）趋近，速率 0 不调整；修正下潜/上浮速率选择（深度 target>cur 用 descent、target<cur 用 ascent）
+- **护航队 formationDistance 单位错误（A2）**：桌面版 MoveCompassFormation 反汇编确认 FormationDistance 直接是**文件单位**（×100000 海里定点），与中心坐标直接相加；此前创建时写码、移动时按海里×10⁵ 解释 → 编队成员被甩到 2000 海里外。修正创建（yardsToFile 转换）与移动（不再乘 NMI_SCALE）
+- **编队移动找不到中心（顺带）**：分组 filter 只保留 isInFormation 成员，把中心单位（仅 IsFormationCenter）排除 → 找不到中心、成员不动。修正为中心也纳入分组
+- **测量手势与地图平移冲突（C1）**：测量模式拖动画线时单指同时平移地图。修正为测量模式下禁用单指平移（双指缩放保留）
+- **Range 耗尽"继续移动"语义错误（C3）**：桌面版 Continue Movement = 无视 Range 继续航行；此前实现成"下一回合仍 0 距离不动"。新增瞬态 ignoreRange 标记，选"继续"后正常移动且不再弹窗
+
+### 新增
+- JUnit：高度爬升/下降/不越界/速率0/单位制、编队方位距离/文件单位、Range 扣减/耗尽停船/无视限制继续，共 46 测试全过（此前 35）
+
 ## [0.2.1] - 2026-08-08
 
 ### 修复

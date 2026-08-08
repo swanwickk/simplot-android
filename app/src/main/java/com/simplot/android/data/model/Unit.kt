@@ -9,10 +9,11 @@ import kotlin.jvm.Transient
  * 数值编码（与桌面版一致）：
  * - Speed = 节 × 1000
  * - Course = 度 × 1000（罗盘角 0=北 顺时针）
- * - Altitude = 米 × 1000（飞机）
- * - Depth = 米 × 1000（潜艇）
+ * - Altitude = 米（整数，桌面版原样存取，无定点！实测 JsonToUnit 对 Altitude 直接 movsd）
+ * - Depth = 米（同上，原样存取）
  * - X / Y = 海里 × 100000（整数定点，Y 向北为正）
  * - Range = 海里 × 1（整数，-100000 表示无限制）
+ * ⚠️ 高度/深度无 ×1000 定点（此前误写为 ×1000，与桌面版不兼容，已修正）
  */
 data class Unit(
     @SerializedName("IdNum") var idNum: String = "S001",            // 对象 ID：S=水面 A=飞机 U=潜艇 L=岸上
@@ -29,8 +30,8 @@ data class Unit(
     @SerializedName("IsActiveSonar") var isActiveSonar: Boolean = false,
     @SerializedName("IsInFormation") var isInFormation: Boolean = false,
     @SerializedName("IsFormationCenter") var isFormationCenter: Boolean = false,
-    @SerializedName("FormationBearing") var formationBearing: Int = 0,
-    @SerializedName("FormationDistance") var formationDistance: Int = 0,
+    @SerializedName("FormationBearing") var formationBearing: Int = 0,   // ×1000 定点（罗盘角）
+    @SerializedName("FormationDistance") var formationDistance: Int = 0,  // 文件单位（海里×100000，桌面版 Double 原样与中心坐标相加）
     @SerializedName("FormationName") var formationName: String = "",
     @SerializedName("PositionTimeCreated") var positionTimeCreated: String = "",
     @SerializedName("PositionTimeDeleted") var positionTimeDeleted: String = "2999-12-31 00:00:00",
@@ -42,11 +43,11 @@ data class Unit(
     @SerializedName("TextTags") var textTags: TextTags = TextTags(),
     @SerializedName("SensorArray") var sensorArray: MutableList<Sensor>? = null,       // 传感器射程弧
     @SerializedName("WeaponArray") var weaponArray: MutableList<Weapon>? = null,       // 武器射程弧
-    @SerializedName("Altitude") var altitude: Int? = null,             // 飞机高度 ×1000（仅飞机）
+    @SerializedName("Altitude") var altitude: Int? = null,             // 飞机高度（米，原样存取）
     @SerializedName("AssignedAltitude") var assignedAltitude: Int? = null,
-    @SerializedName("Climb") var climb: Int? = null,
+    @SerializedName("Climb") var climb: Int? = null,                   // 爬升速率（米/回合？桌面版运行时 /180 得每秒变化）
     @SerializedName("Descend") var descend: Int? = null,
-    @SerializedName("Depth") var depth: Int? = null,                // 潜艇深度 ×1000（仅潜艇）
+    @SerializedName("Depth") var depth: Int? = null,                // 潜艇深度（米，原样存取）
     @SerializedName("AssignedDepth") var assignedDepth: Int? = null,
     @SerializedName("Ascend") var ascend: Int? = null,
     @SerializedName("DescRate") var descRate: Int? = null,
@@ -56,13 +57,16 @@ data class Unit(
     @Transient var isNewThisTurn: Boolean = false,
 
     /** 瞬态：最大航速（节），由舰船信息表填写；用于 A 级快慢判定与 75% 加速档（不落盘） */
-    @Transient var maxSpeedKnots: Double? = null
+    @Transient var maxSpeedKnots: Double? = null,
+
+    /** 瞬态：Range 耗尽后选择"继续移动"（桌面版 Continue Movement = 无视 Range 继续航行，不落盘） */
+    @Transient var ignoreRange: Boolean = false
 ) {
-    // ---- 便捷换算（节/度/米） ----
+    // ---- 便捷换算（节/度；高度深度已是米，直接返回） ----
     fun speedKnots(): Double = speed / 1000.0
     fun courseDeg(): Double = course / 1000.0
-    fun altitudeMeters(): Int? = altitude?.let { it / 1000 }
-    fun depthMeters(): Int? = depth?.let { it / 1000 }
+    fun altitudeMeters(): Int? = altitude
+    fun depthMeters(): Int? = depth
 
     fun setSpeed(knots: Double) { speed = (knots * 1000).toInt() }
     fun setCourse(deg: Double) { course = ((deg % 360) * 1000).toInt() }
@@ -85,24 +89,24 @@ data class Waypoint(
     @SerializedName("Y") var y: Long = 0,
     @SerializedName("Speed") var speed: Int = 0,            // ×1000
     @SerializedName("Course") var course: Int = 0,           // ×1000
-    @SerializedName("AltitudeDepth") var altitudeDepth: Int = 0,   // ×1000
-    @SerializedName("AssignedAltDepth") var assignedAltDepth: Int = 0,
-    @SerializedName("Ascent") var ascent: Int = 0,
-    @SerializedName("Descent") var descent: Int = 0,
+    @SerializedName("AltitudeDepth") var altitudeDepth: Int = 0,   // 米（原样存取，无定点）
+    @SerializedName("AssignedAltDepth") var assignedAltDepth: Int = 0,  // 米（原样存取）
+    @SerializedName("Ascent") var ascent: Int = 0,          // 爬升速率（米/回合）
+    @SerializedName("Descent") var descent: Int = 0,        // 下降速率（米/回合）
     @SerializedName("Number") var number: Int = 1,
     @SerializedName("IsTurnTime") var isTurnTime: Boolean = true,
     @SerializedName("PositionTime") var positionTime: String = ""
 )
 
-/** 传感器射程弧（桌面版 SensorArray 元素） */
+/** 传感器射程弧（桌面版 SensorArray 元素；默认值对齐 CArc 构造：MaxRange=50、ArcColor=黄色 &h00FFFF00） */
 data class Sensor(
     @SerializedName("Tag") var tag: String = "",
     @SerializedName("Label") var label: String = "",
     @SerializedName("MinRange") var minRange: Double = 0.0,
-    @SerializedName("MaxRange") var maxRange: Double = 0.0,
+    @SerializedName("MaxRange") var maxRange: Double = 50.0,
     @SerializedName("StartAngle") var startAngle: Double = 0.0,
     @SerializedName("ArcAngle") var arcAngle: Double = 0.0,
-    @SerializedName("ArcColor") var arcColor: String = "&h00000000",
+    @SerializedName("ArcColor") var arcColor: String = "&h00FFFF00",
     @SerializedName("IsFilled") var isFilled: Boolean = false,
     @SerializedName("IsVisible") var isVisible: Boolean = false
 )
@@ -112,10 +116,10 @@ data class Weapon(
     @SerializedName("Tag") var tag: String = "",
     @SerializedName("Label") var label: String = "",
     @SerializedName("MinRange") var minRange: Double = 0.0,
-    @SerializedName("MaxRange") var maxRange: Double = 0.0,
+    @SerializedName("MaxRange") var maxRange: Double = 50.0,
     @SerializedName("StartAngle") var startAngle: Double = 0.0,
     @SerializedName("ArcAngle") var arcAngle: Double = 0.0,
-    @SerializedName("ArcColor") var arcColor: String = "&h00000000",
+    @SerializedName("ArcColor") var arcColor: String = "&h00FFFF00",
     @SerializedName("IsFilled") var isFilled: Boolean = false,
     @SerializedName("IsVisible") var isVisible: Boolean = false
 )

@@ -213,8 +213,8 @@ class MainActivity : ComponentActivity() {
         val f = file ?: return
         MovementEngine.advance(f, f.time.currentTurnInterval)
         turnTick++
-        // Range 耗尽检测：仅提示，桌面版三选弹窗（Continue/Delete/Stop）
-        f.units.firstOrNull { it.range == 0 && !it.showSunk }?.let { rangeExhaustedUnit = it }
+        // Range 耗尽检测：仅提示，桌面版三选弹窗（Continue/Delete/Stop）；已选"继续移动"的单位不再提示
+        f.units.firstOrNull { it.range == 0 && !it.showSunk && !it.ignoreRange }?.let { rangeExhaustedUnit = it }
         toast("Do：已移动至 ${f.time.currentPositionTime}")
     }
 
@@ -282,6 +282,8 @@ class MainActivity : ComponentActivity() {
     /**
      * 生成护航队（桌面版 Game.Convoy.CreateConvoy）：
      * COMMODORE 居中（Blue Merchant），Merchant 商船环绕，dist=2000 码，角度 360/count 均匀分布。
+     * ⚠️ FormationDistance 存档单位 = 文件单位（海里×100000），创建时用 yardsToFile(2000) 转换
+     * （反汇编确认 MoveCompassFormation 直接 Distance×Sin/Cos 与中心坐标相加）。
      */
     private fun createConvoy() {
         file?.let { f ->
@@ -298,6 +300,7 @@ class MainActivity : ComponentActivity() {
             )
             val units = mutableListOf(commodore)
             val escortCount = 6
+            val distFile = com.simplot.android.data.util.CoordUtil.yardsToFile(2000.0).toInt()   // 2000 码 → 文件单位
             for (i in 0 until escortCount) {
                 val angle = 360.0 / escortCount * i
                 val (dx, dy) = com.simplot.android.data.util.CoordUtil.offsetYards(angle, 2000.0)
@@ -315,7 +318,7 @@ class MainActivity : ComponentActivity() {
                         isInFormation = true,
                         formationName = "Convoy",
                         formationBearing = (angle * 1000).toInt(),
-                        formationDistance = 2000
+                        formationDistance = distFile
                     )
                 )
             }
@@ -430,9 +433,15 @@ class MainActivity : ComponentActivity() {
                 text = { Text("${u.name} 剩余航程为 0，如何处理？") },
                 confirmButton = {
                     Button(onClick = {
-                        // Continue Movement：保持原状（下一回合仍 0 距离不动）
+                        // Continue Movement（桌面版语义）：无视 Range 继续航行（Range 保持 0）
+                        val u2 = u
                         rangeExhaustedUnit = null
-                        toast("${u.name} 继续（无航程）")
+                        f4@ file?.let { f ->
+                            val t = f.units.firstOrNull { it.idNum == u2.idNum }
+                            if (t != null) t.ignoreRange = true
+                            turnTick++
+                        }
+                        toast("${u2.name} 继续（无视航程限制）")
                     }) { Text("继续移动") }
                 },
                 dismissButton = {

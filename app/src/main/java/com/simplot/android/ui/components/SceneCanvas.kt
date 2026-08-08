@@ -75,7 +75,9 @@ fun SceneCanvas(
                         camera.zoomAt(zoom, centroid.x, centroid.y, size.width, size.height)
                     }
                     // 平移：始终生效（单指拖动 / 双指缩放时跟随）
-                    if (abs(pan.x) > 0.5f || abs(pan.y) > 0.5f) {
+                    // ⚠️ 测量模式下禁用单指平移（否则拖动画线与地图拖动冲突，C1 修复）
+                    val measuring = measureMode
+                    if (!measuring && (abs(pan.x) > 0.5f || abs(pan.y) > 0.5f)) {
                         camera.pan(pan.x, pan.y)
                     }
                 }
