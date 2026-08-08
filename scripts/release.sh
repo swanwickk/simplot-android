@@ -25,7 +25,8 @@ NEW_VER="${1:?用法: scripts/release.sh <新版本号, 如 0.2.0>}"
 export LANG=C.utf8 LC_ALL=C.utf8          # 中文 asset 文件名需要 UTF-8 locale
 export JAVA_HOME="${JAVA_HOME:-$(dirname "$(readlink -f "$(command -v java)")")/..}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
-command -v gh >/dev/null || { echo "❌ 缺少 gh CLI"; exit 1; }
+command -v gh >/dev/null || export PATH="$PATH:$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/toolchain/gh_2.97.0_linux_amd64/bin"
+command -v gh >/dev/null || { echo "❌ 缺少 gh CLI（可运行 scripts/setup-toolchain.sh 安装）"; exit 1; }
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo swanwickk/simplot-android)"
 
 # ---- 1. 校验 CHANGELOG 已更新（硬性规则①）----
