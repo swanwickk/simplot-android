@@ -11,6 +11,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
 import com.simplot.android.engine.ReplayEngine
+import com.simplot.android.render.ArcRenderer
 import com.simplot.android.render.Camera
 import com.simplot.android.render.MapRenderer
 import com.simplot.android.render.TrackRenderer

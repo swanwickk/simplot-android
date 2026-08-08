@@ -5,6 +5,11 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.1.1] - 2026-08-08
+
+### 修复
+- SceneCanvas 缺少 `ArcRenderer` import，导致 Gradle 真机构建失败（首次沙箱构建发现）。
+
 ## [0.1.0] - 2026-08-08
 
 开发版首个版本。SimPlot 桌面版（Windows）的 Android 复刻，目标：读取/保存官方桌面版场景存档（JSON），支持回合制推演、海图显示与基本编辑。
