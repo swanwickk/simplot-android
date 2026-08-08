@@ -74,3 +74,13 @@ if [ ! -x "$TC/gh_2.97.0_linux_amd64/bin/gh" ]; then
 fi
 echo "✅ gh: $($TC/gh_2.97.0_linux_amd64/bin/gh --version | head -1)"
 echo "提示：GitHub token 需重新认证 → $TC/gh_2.97.0_linux_amd64/bin/gh auth login --with-token"
+
+# ---- 7. GitHub 认证恢复（token 持久化在 workspace/.env，防沙箱重置丢失） ----
+if [ -f "$WS/.env" ] && grep -q "^GH_TOKEN=" "$WS/.env"; then
+  TOKEN="$(grep "^GH_TOKEN=" "$WS/.env" | cut -d= -f2)"
+  if ! "$TC/gh_2.97.0_linux_amd64/bin/gh" auth status > /dev/null 2>&1; then
+    echo "$TOKEN" | "$TC/gh_2.97.0_linux_amd64/bin/gh" auth login --with-token
+    "$TC/gh_2.97.0_linux_amd64/bin/gh" auth setup-git
+    echo "✅ GitHub 认证已恢复（token 来自 workspace/.env）"
+  fi
+fi
