@@ -19,6 +19,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
 import com.simplot.android.data.util.CoordUtil
+import com.simplot.android.data.util.UnitDistance
 import com.simplot.android.engine.ReplayEngine
 import com.simplot.android.render.ArcRenderer
 import com.simplot.android.render.Camera
@@ -48,6 +49,8 @@ fun SceneCanvas(
     tick: Int = 0,
     measureMode: Boolean = false,
     onMeasureDone: ((start: Pair<Long, Long>, end: Pair<Long, Long>) -> kotlin.Unit)? = null,
+    savedMeasures: List<Pair<Pair<Long, Long>, Pair<Long, Long>>> = emptyList(),
+    unitDistances: List<UnitDistance>? = null,
     symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
 ) {
     val replaying = replayFrame != null
@@ -183,37 +186,96 @@ fun SceneCanvas(
             }
         }
 
-        // 测量线（桌面版 Measurement）：起点→终点 + 方位/距离标签
+        // 测量线（桌面版 Measurement）绘制顺序：已保存留存线 → 点选单位距离辅助线 → 拖拽中临时线
+        val nc = drawContext.canvas.nativeCanvas
+        // ① 已保存测量线（松手后留存，淡色细线；draw 阶段读快照列表 → 自动重绘）
+        for (m in savedMeasures) {
+            drawMeasureLine(nc, camera, w, h, m.first, m.second, saved = true)
+        }
+        // ② 点选单位到其它单位的距离/方位辅助线（灰线 + 中点标签）
+        val ud = unitDistances
+        if (ud != null && ud.isNotEmpty()) {
+            val sel = file.units.firstOrNull { it.idNum == selectedUnitId }
+            if (sel != null) {
+                val (selX, selY) = camera.worldToScreen(sel.x, sel.y, w, h)
+                for (d in ud) {
+                    val target = file.units.firstOrNull { it.idNum == d.idNum } ?: continue
+                    val (tx, ty) = camera.worldToScreen(target.x, target.y, w, h)
+                    val linePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        color = android.graphics.Color.argb(160, 90, 90, 90)
+                        strokeWidth = 1.5f
+                        style = android.graphics.Paint.Style.STROKE
+                    }
+                    nc.drawLine(selX, selY, tx, ty, linePaint)
+                    val midX = (selX + tx) / 2f
+                    val midY = (selY + ty) / 2f - 6f
+                    val lines = listOf(d.name, String.format("%.1f nmi %.0f°", d.distNm, d.bearingDeg))
+                    val outlinePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        color = android.graphics.Color.WHITE
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 3f
+                        textSize = 13f
+                        textAlign = android.graphics.Paint.Align.CENTER
+                    }
+                    val fillPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        color = android.graphics.Color.rgb(60, 60, 60)
+                        textSize = 13f
+                        textAlign = android.graphics.Paint.Align.CENTER
+                    }
+                    val lineHeight = 15f
+                    var textY = midY - (lines.size - 1) * lineHeight / 2f + 5f
+                    for (line in lines) {
+                        nc.drawText(line, midX, textY, outlinePaint)
+                        nc.drawText(line, midX, textY, fillPaint)
+                        textY += lineHeight
+                    }
+                }
+            }
+        }
+        // 拖拽中临时测量线（saved=false，现样式不变）
         val ms = measureStart
         val me = measureEnd
         if (ms != null && me != null) {
-            val nc = drawContext.canvas.nativeCanvas
-            val (sx0, sy0) = camera.worldToScreen(ms.first, ms.second, w, h)
-            val (sx1, sy1) = camera.worldToScreen(me.first, me.second, w, h)
-            val mPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                color = android.graphics.Color.argb(230, 220, 60, 40)
-                strokeWidth = 3f
-                style = android.graphics.Paint.Style.STROKE
-            }
-            nc.drawLine(sx0, sy0, sx1, sy1, mPaint)
-            nc.drawCircle(sx0, sy0, 8f, mPaint)
-            val distNm = CoordUtil.distanceNm(ms.first, ms.second, me.first, me.second)
-            val bearing = CoordUtil.bearingDeg(ms.first, ms.second, me.first, me.second)
-            val label = String.format("%.1f nmi  方位 %.0f°", distNm, bearing)
-            val tPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                color = android.graphics.Color.WHITE
-                textSize = 16f
-            }
-            val midX = (sx0 + sx1) / 2f
-            val midY = (sy0 + sy1) / 2f - 14f
-            nc.drawText(label, midX + 2f, midY + 2f, tPaint)
-            tPaint.color = android.graphics.Color.argb(255, 220, 60, 40)
-            nc.drawText(label, midX, midY, tPaint)
+            drawMeasureLine(nc, camera, w, h, ms, me, saved = false)
         }
 
         // 坐标比例尺条（右下角）
         drawScaleBar(drawContext.canvas.nativeCanvas, w, h)
     }
+}
+
+/** 测量线绘制：saved=true 留存淡色细线（松手后保留）；saved=false 拖拽中临时线（现样式） */
+private fun drawMeasureLine(
+    canvas: android.graphics.Canvas,
+    camera: Camera,
+    w: Int,
+    h: Int,
+    start: Pair<Long, Long>,
+    end: Pair<Long, Long>,
+    saved: Boolean
+) {
+    val (sx0, sy0) = camera.worldToScreen(start.first, start.second, w, h)
+    val (sx1, sy1) = camera.worldToScreen(end.first, end.second, w, h)
+    val mPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (saved) android.graphics.Color.argb(150, 220, 60, 40)
+        else android.graphics.Color.argb(230, 220, 60, 40)
+        strokeWidth = if (saved) 2f else 3f
+        style = android.graphics.Paint.Style.STROKE
+    }
+    canvas.drawLine(sx0, sy0, sx1, sy1, mPaint)
+    canvas.drawCircle(sx0, sy0, if (saved) 4f else 8f, mPaint)
+    val distNm = CoordUtil.distanceNm(start.first, start.second, end.first, end.second)
+    val bearing = CoordUtil.bearingDeg(start.first, start.second, end.first, end.second)
+    val label = String.format("%.1f nmi  方位 %.0f°", distNm, bearing)
+    val tPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        textSize = 16f
+    }
+    val midX = (sx0 + sx1) / 2f
+    val midY = (sy0 + sy1) / 2f - 14f
+    canvas.drawText(label, midX + 2f, midY + 2f, tPaint)
+    tPaint.color = android.graphics.Color.argb(255, 220, 60, 40)
+    canvas.drawText(label, midX, midY, tPaint)
 }
 
 /** 标签绘制（名称 + 航向航速）：字号与锚点偏移随 zoom 等比缩放（Bug 2 / 反馈⑥） */

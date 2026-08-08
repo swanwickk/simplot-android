@@ -3,6 +3,7 @@ package com.simplot.android.ui
 import android.app.Application
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -49,8 +50,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var measureMode by mutableStateOf(false)
     var showCalcPosition by mutableStateOf(false)
 
-    /** 已完成的测量（桌面版 Measurement，用于 CSV 导出）：起终点世界坐标 */
-    val measureLog = mutableListOf<Pair<Pair<Long, Long>, Pair<Long, Long>>>()
+    /** 已完成的测量（桌面版 Measurement，用于 CSV 导出 + 画布留存绘制）：起终点世界坐标
+     *  SnapshotStateList：draw 阶段迭代读 → 变更即触发 Canvas 失效重绘（反馈①修复核心） */
+    val measureLog = mutableStateListOf<Pair<Pair<Long, Long>, Pair<Long, Long>>>()
 
     /** 符号风格（桌面版玩家设置：NTDS / CWS） */
     var symbolStyle by mutableStateOf(com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS)

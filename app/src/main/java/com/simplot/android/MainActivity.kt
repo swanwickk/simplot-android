@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.simplot.android.data.util.CoordUtil
+import com.simplot.android.data.util.unitDistances
 import com.simplot.android.data.model.Unit as SimUnit
 import com.simplot.android.ui.GameViewModel
 import com.simplot.android.ui.components.ReplayBar
@@ -112,6 +113,8 @@ class MainActivity : ComponentActivity() {
                 if (f != null) {
                     // 回放模式：帧覆盖画布 + 回放控制条；正常模式：实时编辑
                     val replaying = vm.replayTimeline.isNotEmpty()
+                    // ② 点选单位自动测量：仅非回放且非测量模式且选中单位时计算（selectedUnitId 变更即重组刷新）
+                    val unitDist = if (!replaying && !vm.measureMode) vm.selectedUnitId?.let { unitDistances(f, it) } else null
                     SceneCanvas(
                         file = f,
                         camera = vm.camera,
@@ -123,6 +126,8 @@ class MainActivity : ComponentActivity() {
                         tick = vm.revision,
                         measureMode = vm.measureMode && !replaying,
                         onMeasureDone = { start, end -> vm.onMeasureComplete(start, end) },
+                        savedMeasures = vm.measureLog,
+                        unitDistances = unitDist,
                         symbolStyle = vm.symbolStyle,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
@@ -149,6 +154,7 @@ class MainActivity : ComponentActivity() {
                             onUndo = { vm.undo() },
                             onNext = { vm.next() },
                             tick = vm.revision,
+                            onIntervalSet = { m, s -> vm.toast("回合时长已设为 $m 分 $s 秒") },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }

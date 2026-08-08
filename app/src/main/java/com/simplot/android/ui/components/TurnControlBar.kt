@@ -36,7 +36,8 @@ fun TurnControlBar(
     onUndo: () -> Unit,
     onNext: () -> Unit,
     modifier: Modifier = Modifier,
-    tick: Int = 0
+    tick: Int = 0,
+    onIntervalSet: ((minutes: Int, seconds: Int) -> Unit)? = null
 ) {
     // 回合时长编辑状态（分钟/秒）
     var minutesText by remember { mutableStateOf(file.time.currentTurnInterval.minutes.toString()) }
@@ -95,7 +96,8 @@ fun TurnControlBar(
                     file.time.currentTurnInterval = TurnInterval(m, s)
                     minutesText = m.toString()
                     secondsText = s.toString()
-                }) { Text("设置") }
+                    onIntervalSet?.invoke(m, s)
+                }) { Text("设置时长") }
             }
 
             // Do / Undo / Next 按钮行
