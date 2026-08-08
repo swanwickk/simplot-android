@@ -9,10 +9,13 @@ data class TimeState(
     @SerializedName("CurrentTurnInterval") var currentTurnInterval: TurnInterval = TurnInterval()       // 回合时长（默认 3:00）
 )
 
-/** 回合时长：玩家可自由填写 XX分XX秒，默认 3 分钟 */
+/**
+ * 回合时长：玩家可自由填写 XX分XX秒，默认 3 分钟。
+ * 键名与桌面版一致：{"Minutes": 3, "Seconds": 0}
+ */
 data class TurnInterval(
-    var minutes: Int = 3,
-    var seconds: Int = 0
+    @SerializedName("Minutes") var minutes: Int = 3,
+    @SerializedName("Seconds") var seconds: Int = 0
 ) {
     /** 总分钟数（含秒折算） */
     fun totalMinutes(): Double = minutes + seconds / 60.0
@@ -30,7 +33,7 @@ data class TurnInterval(
     }
 }
 
-/** 已确认回合历史记录 */
+/** 已确认回合历史记录（键名与桌面版一致） */
 data class Turn(
     @SerializedName("TurnTime") var turnTime: String = "",
     @SerializedName("TurnInterval") var turnInterval: TurnInterval = TurnInterval()

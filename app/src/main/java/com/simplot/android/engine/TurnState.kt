@@ -27,10 +27,7 @@ object TurnState {
     fun detect(file: ScenarioFile): State {
         val tt = file.time.currentTurnTime
         val pt = file.time.currentPositionTime
-        val hasWp = file.units.any { u ->
-            val past = u.pastWaypointArray1
-            past is List<*> && past.isNotEmpty()
-        }
+        val hasWp = file.units.any { it.pastWaypointArray.isNotEmpty() }
         return when {
             tt == pt -> if (hasWp) State.DO_NEXT else State.DO_BEFORE
             else -> State.DO_AFTER

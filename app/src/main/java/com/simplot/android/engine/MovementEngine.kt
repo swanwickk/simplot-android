@@ -2,6 +2,7 @@ package com.simplot.android.engine
 
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
+import com.simplot.android.data.model.Waypoint
 import com.simplot.android.data.util.CoordUtil
 import com.simplot.android.data.util.TimeUtil
 import kotlin.math.abs
@@ -18,11 +19,14 @@ import kotlin.math.sin
  * - 转向 ≤10° 无需前冲，直接沿新航向移动
  * - 转向 >10° 需前冲 + 分段（单次最多 45°），渐进式（距离不足部分转向，0 距离不转向）
  * - 转向 ≥45° 加速减半；每 45° 转向损失航速
- * - 轨迹：移动前位置写入 PastWaypointArray1，转向点追加
+ * - 轨迹：移动前位置写入 PastWaypointArray（桌面版对象结构），转向点追加
+ * - Range（海里，-100000=无限制）：随移动递减，耗尽后停止移动
+ * - 新单位（isNewThisTurn）：当回合不移动（导弹/鱼雷发射规则）
  */
 object MovementEngine {
 
     const val NO_ADVANCE_DEG = 10.0
+    const val RANGE_UNLIMITED = -100000
 
     // ============ 单位运动指令 ============
 
@@ -51,6 +55,7 @@ object MovementEngine {
         val stateBefore = TurnState.detect(file)
 
         for (u in file.units) {
+            if (u.isNewThisTurn) continue   // 新单位当回合不移动
             val move = moves[u.idNum]
             applyUnitMove(file, u, move, minutes, curTime)
         }
@@ -67,6 +72,7 @@ object MovementEngine {
         var newCourse = oldCourse
         if (move?.newCourse != null) newCourse = move.newCourse!!
         if (move?.courseDelta != null) newCourse = (oldCourse + move.courseDelta!!) % 360.0
+        if (newCourse < 0) newCourse += 360.0   // 规范化到 0-360
 
         // 新航速：原速 + 加减速 - 转向损失（每 45° 按表）
         val delta = minimalDelta(oldCourse, newCourse)
@@ -86,13 +92,21 @@ object MovementEngine {
         if (move?.newAltitude != null && u.altitude != null) u.altitude = move.newAltitude!! * 1000
         if (move?.newDepth != null && u.depth != null) u.depth = move.newDepth!! * 1000
 
-        // 记录起点轨迹（移动前位置）
-        val past = (u.pastWaypointArray1 as? MutableList<Any>) ?: mutableListOf<Any>()
-        past.add(makeWaypoint(u, curTime))
-        u.pastWaypointArray1 = past
+        // 记录起点轨迹（移动前位置）——桌面版对象结构
+        u.pastWaypointArray.add(makeWaypoint(u, curTime))
 
-        // 移动
-        val distFile = (newSpeed * minutes / 60.0 * CoordUtil.NMI_SCALE).toLong()
+        // Range 限制：可移动海里数（-100000 = 无限制；0 = 已耗尽停止）
+        var distNm = newSpeed * minutes / 60.0
+        if (u.range >= 0) {
+            if (distNm >= u.range) {
+                distNm = u.range.toDouble()   // 本回合耗尽剩余 Range
+                u.range = 0
+            } else {
+                u.range -= maxOf(1, distNm.roundToInt())   // 至少扣 1 海里
+            }
+        }
+
+        val distFile = (distNm * CoordUtil.NMI_SCALE).toLong()
         if (newSpeed <= 0 || distFile <= 0) {
             // 0 距离：不移动不转向
             u.course = (oldCourse * 1000).roundToInt()
@@ -101,12 +115,16 @@ object MovementEngine {
             val (nx, ny, turnPts, actualCourse) = turnMotion(
                 u.x, u.y, oldCourse, newCourse, distFile.toDouble(), adv
             )
-            // 转向点加入轨迹
+            // 转向点加入轨迹（桌面版对象结构）
             for (pt in turnPts) {
-                val w = mutableListOf<Any>()
-                w.add(""); w.add(pt.first); w.add(pt.second); w.add(0); w.add(0)
-                w.add(altDepthOf(u)); w.add(0); w.add(0); w.add(0); w.add(1); w.add(true); w.add(curTime)
-                past.add(w)
+                u.pastWaypointArray.add(
+                    Waypoint(
+                        x = pt.first, y = pt.second,
+                        altitudeDepth = altDepthOf(u),
+                        number = 1, isTurnTime = true,
+                        positionTime = curTime
+                    )
+                )
             }
             u.x = nx; u.y = ny
             u.course = (actualCourse * 1000).roundToInt()
@@ -196,9 +214,12 @@ object MovementEngine {
 
     fun altDepthOf(u: Unit): Int = u.altitude ?: u.depth ?: 0
 
-    private fun makeWaypoint(u: Unit, ts: String): List<Any> {
-        return listOf(
-            "", u.x, u.y, 0, 0, altDepthOf(u), 0, 0, 0, 1, true, ts
+    private fun makeWaypoint(u: Unit, ts: String): Waypoint {
+        return Waypoint(
+            x = u.x, y = u.y,
+            altitudeDepth = altDepthOf(u),
+            number = 1, isTurnTime = true,
+            positionTime = ts
         )
     }
 }

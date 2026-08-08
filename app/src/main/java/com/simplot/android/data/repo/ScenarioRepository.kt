@@ -2,6 +2,7 @@ package com.simplot.android.data.repo
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.simplot.android.data.codec.JsonUtil
 import com.simplot.android.data.codec.SpScnCodec
@@ -57,9 +58,9 @@ class ScenarioRepository(private val context: Context) {
      * @param data      裁判全量数据（File 字段会被覆盖为对应视角）
      */
     fun saveThreeFiles(directory: Uri, fileName: String, data: ScenarioFile) {
-        saveJson(createChild(directory, "$fileName.json"), data.apply { file = "Referee" })
-        saveScn(createChild(directory, "Blue.SpScn"), data.apply { file = "Blue" })
-        saveScn(createChild(directory, "Red.SpScn"), data.apply { file = "Red" })
+        saveJson(childOrCreate(directory, "$fileName.json"), data.copy(file = "Referee"))
+        saveScn(childOrCreate(directory, "Blue.SpScn"), data.copy(file = "Blue"))
+        saveScn(childOrCreate(directory, "Red.SpScn"), data.copy(file = "Red"))
     }
 
     /**
@@ -73,9 +74,9 @@ class ScenarioRepository(private val context: Context) {
         directory: Uri, fileName: String,
         refereeData: ScenarioFile, blueView: ScenarioFile, redView: ScenarioFile
     ) {
-        saveJson(createChild(directory, "$fileName.json"), refereeData.apply { file = "Referee" })
-        saveScn(createChild(directory, "Blue.SpScn"), blueView.apply { file = "Blue" })
-        saveScn(createChild(directory, "Red.SpScn"), redView.apply { file = "Red" })
+        saveJson(childOrCreate(directory, "$fileName.json"), refereeData.copy(file = "Referee"))
+        saveScn(childOrCreate(directory, "Blue.SpScn"), blueView.copy(file = "Blue"))
+        saveScn(childOrCreate(directory, "Red.SpScn"), redView.copy(file = "Red"))
     }
 
     fun saveJson(uri: Uri, data: ScenarioFile) {
@@ -88,17 +89,38 @@ class ScenarioRepository(private val context: Context) {
 
     // ============ SAF 文件操作 ============
 
-    private fun createChild(directory: Uri, name: String): Uri {
-        val doc = android.provider.DocumentsContract.buildDocumentUriUsingTree(
-            directory, android.provider.DocumentsContract.getTreeDocumentId(directory)
+    /**
+     * 获取目录下已有子文档 URI；不存在则创建。
+     * （避免重复保存生成 "Blue (1).SpScn" 副本）
+     */
+    private fun childOrCreate(directory: Uri, name: String): Uri {
+        findChild(directory, name)?.let { return it }
+        return DocumentsContract.createDocument(
+            context.contentResolver, directory, "application/octet-stream", name
+        ) ?: throw IllegalStateException("无法在所选目录创建文件：$name")
+    }
+
+    /** 在 tree uri 目录中按显示名查找子文档 */
+    private fun findChild(directory: Uri, name: String): Uri? {
+        val treeId = DocumentsContract.getTreeDocumentId(directory)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directory, treeId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME
         )
-        // 尝试创建子文档
         return try {
-            android.provider.DocumentsContract.createDocument(
-                context.contentResolver, directory, "application/octet-stream", name
-            ) ?: doc
+            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val display = c.getString(c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
+                    if (display == name) {
+                        val docId = c.getString(c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                        return DocumentsContract.buildDocumentUriUsingTree(directory, docId)
+                    }
+                }
+                null
+            } ?: null
         } catch (e: Exception) {
-            doc
+            null
         }
     }
 

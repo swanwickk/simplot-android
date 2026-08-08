@@ -4,22 +4,25 @@ import com.google.gson.annotations.SerializedName
 
 /**
  * 场景存档顶层模型（对应 SimPlot2 存档 JSON 结构）
- * 序列化键序尽量与桌面版一致（Gson 按声明顺序输出）
+ *
+ * 键序与桌面版 2.3.9 真实存档逐字节一致（实测 Iron Bottom Sound 场景）：
+ * File, SimPlot Version, IsIntegerFile, Scenario, TypeOfGame, Time, Turns,
+ * Overlays, Objects, Units, Formations
  */
 data class ScenarioFile(
-    var file: String = "Referee",                     // Referee / Blue / Red
+    @SerializedName("File") var file: String = "Referee",                     // Referee / Blue / Red
     @SerializedName("SimPlot Version")
     var simPlotVersion: String = "2.3",
     @SerializedName("IsIntegerFile")
     var isIntegerFile: Boolean = true,
-    var scenario: Scenario = Scenario(),
-    var typeOfGame: Int = 0,
-    var time: TimeState = TimeState(),
-    var turns: MutableList<Turn> = mutableListOf(),
-    var overlays: Map<String, Any?> = emptyMap(),
-    var objects: MutableList<String> = mutableListOf(),
-    var units: MutableList<Unit> = mutableListOf(),
-    var formations: Map<String, Any?> = emptyMap()
+    @SerializedName("Scenario") var scenario: Scenario = Scenario(),
+    @SerializedName("TypeOfGame") var typeOfGame: Int = 0,
+    @SerializedName("Time") var time: TimeState = TimeState(),
+    @SerializedName("Turns") var turns: MutableList<Turn> = mutableListOf(),
+    @SerializedName("Overlays") var overlays: Map<String, Any?> = emptyMap(),
+    @SerializedName("Objects") var objects: MutableList<String> = mutableListOf(),
+    @SerializedName("Units") var units: MutableList<Unit> = mutableListOf(),
+    @SerializedName("Formations") var formations: Map<String, Any?> = emptyMap()
 ) {
     companion object {
         fun fresh(): ScenarioFile = ScenarioFile()

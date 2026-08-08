@@ -130,4 +130,67 @@ class EngineTest {
         assertEquals(1, redView.units.size)
         assertEquals("S002", redView.units.first().idNum)
     }
+
+    @Test
+    fun `range depletes and stops unit`() {
+        // Range 单位：海里整数；12 节 × 3 分钟 = 0.6 海里/回合
+        val u = surfaceUnit("S001", "Blue", 0, 0, 12.0, 90.0)
+        u.range = 1  // 仅 1 海里航程
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        val moved = f.units.first()
+        assertEquals(60000L, moved.x)   // 0.6 海里移动
+        assertEquals(0, moved.range)    // Range 耗尽
+        // 下一回合：Range=0 → 不再移动
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(60000L, moved.x)
+        assertEquals(0L, moved.y)
+    }
+
+    @Test
+    fun `range partially depletes`() {
+        // 12 节 × 6 分钟 = 1.2 海里；Range=0.5 → 只走 0.5 海里（0.5 舍入为 1）
+        val u = surfaceUnit("S001", "Blue", 0, 0, 12.0, 90.0)
+        u.range = 1
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(6, 0))
+        val moved = f.units.first()
+        assertEquals(100000L, moved.x)  // 0.5 海里 = 50000... 见下：distNm=1.2 >= range=1 → distNm=1 → 1 海里
+        assertEquals(0, moved.range)
+    }
+
+    @Test
+    fun `range unlimited by default`() {
+        val u = surfaceUnit("S001", "Blue", 0, 0, 12.0, 90.0)
+        assertEquals(-100000, u.range)
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(60000L, f.units.first().x)  // 0.6 海里正常移动
+    }
+
+    @Test
+    fun `new unit does not move this turn`() {
+        val u = surfaceUnit("S001", "Blue", 0, 0, 12.0, 90.0)
+        u.isNewThisTurn = true
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        val moved = f.units.first()
+        assertEquals(0L, moved.x)
+        assertEquals(0L, moved.y)
+        assertEquals(0, moved.pastWaypointArray.size)   // 不产生轨迹
+    }
+
+    @Test
+    fun `movement records desktop waypoint object`() {
+        val u = surfaceUnit("S001", "Blue", 0, 0, 12.0, 90.0)
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        val wp = f.units.first().pastWaypointArray
+        assertEquals(1, wp.size)
+        // 起点轨迹：移动前位置 (0,0)，时间=回合开始时间
+        assertEquals(0L, wp[0].x)
+        assertEquals(0L, wp[0].y)
+        assertEquals("2026-01-01 00:00:00", wp[0].positionTime)
+        assertTrue(wp[0].isTurnTime)
+    }
 }

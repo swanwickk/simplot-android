@@ -1,9 +1,10 @@
 package com.simplot.android.data.model
 
 import com.google.gson.annotations.SerializedName
+import kotlin.jvm.Transient
 
 /**
- * 单位数据模型（对应存档 Units 数组元素）
+ * 单位数据模型（对应存档 Units 数组元素，键序与桌面版 2.3.9 真实存档一致）
  *
  * 数值编码（与桌面版一致）：
  * - Speed = 节 × 1000
@@ -11,6 +12,7 @@ import com.google.gson.annotations.SerializedName
  * - Altitude = 米 × 1000（飞机）
  * - Depth = 米 × 1000（潜艇）
  * - X / Y = 海里 × 100000（整数定点，Y 向北为正）
+ * - Range = 海里 × 1（整数，-100000 表示无限制）
  */
 data class Unit(
     @SerializedName("IdNum") var idNum: String = "S001",            // 对象 ID：S=水面 A=飞机 U=潜艇 L=岸上
@@ -25,15 +27,21 @@ data class Unit(
     @SerializedName("ShowSunk") var showSunk: Boolean = false,
     @SerializedName("IsActiveRadar") var isActiveRadar: Boolean = false,
     @SerializedName("IsActiveSonar") var isActiveSonar: Boolean = false,
+    @SerializedName("IsInFormation") var isInFormation: Boolean = false,
+    @SerializedName("IsFormationCenter") var isFormationCenter: Boolean = false,
+    @SerializedName("FormationBearing") var formationBearing: Int = 0,
+    @SerializedName("FormationDistance") var formationDistance: Int = 0,
+    @SerializedName("FormationName") var formationName: String = "",
     @SerializedName("PositionTimeCreated") var positionTimeCreated: String = "",
     @SerializedName("PositionTimeDeleted") var positionTimeDeleted: String = "2999-12-31 00:00:00",
     @SerializedName("Speed") var speed: Int = 0,                    // 航速 ×1000
     @SerializedName("Course") var course: Int = 0,                   // 航向 ×1000
-    @SerializedName("Range") var range: Int = -100000,
-    @SerializedName("WpDistance") var wpDistance: Int = 0,
-    @SerializedName("PastWaypointArray1") var pastWaypointArray1: Any = emptyList<Any>(),    // 历史轨迹点
-    @SerializedName("FutureWaypointArray1") var futureWaypointArray1: Any = emptyList<Any>(),  // 未来航路点
+    @SerializedName("Range") var range: Int = -100000,             // 可移动距离（海里），-100000=无限制
+    @SerializedName("PastWaypointArray") var pastWaypointArray: MutableList<Waypoint> = mutableListOf(),   // 历史轨迹点
+    @SerializedName("FutureWaypointArray") var futureWaypointArray: MutableList<Waypoint> = mutableListOf(),  // 未来航路点
     @SerializedName("TextTags") var textTags: TextTags = TextTags(),
+    @SerializedName("SensorArray") var sensorArray: MutableList<Sensor>? = null,       // 传感器射程弧
+    @SerializedName("WeaponArray") var weaponArray: MutableList<Weapon>? = null,       // 武器射程弧
     @SerializedName("Altitude") var altitude: Int? = null,             // 飞机高度 ×1000（仅飞机）
     @SerializedName("AssignedAltitude") var assignedAltitude: Int? = null,
     @SerializedName("Climb") var climb: Int? = null,
@@ -42,7 +50,10 @@ data class Unit(
     @SerializedName("AssignedDepth") var assignedDepth: Int? = null,
     @SerializedName("Ascend") var ascend: Int? = null,
     @SerializedName("DescRate") var descRate: Int? = null,
-    @SerializedName("PerceptionArray") var perceptionArray: MutableList<Perception> = mutableListOf()
+    @SerializedName("PerceptionArray") var perceptionArray: MutableList<Perception>? = null,
+
+    /** 瞬态标记：本回合新加入的单位不移动（不落盘，Gson 忽略） */
+    @Transient var isNewThisTurn: Boolean = false
 ) {
     // ---- 便捷换算（节/度/米） ----
     fun speedKnots(): Double = speed / 1000.0
@@ -59,16 +70,67 @@ data class Unit(
     fun isSurface(): Boolean = !isSubmarine() && !isAircraft()
 }
 
-/** 标签显示设置 */
+/**
+ * 轨迹/航路点（桌面版对象结构，实测 Iron Bottom Sound）：
+ * {"Name":"","X":-400000,"Y":400000,"Speed":0,"Course":0,"AltitudeDepth":0,
+ *  "AssignedAltDepth":0,"Ascent":0,"Descent":0,"Number":1,"IsTurnTime":true,
+ *  "PositionTime":"1942-10-01 00:00:00"}
+ */
+data class Waypoint(
+    @SerializedName("Name") var name: String = "",
+    @SerializedName("X") var x: Long = 0,
+    @SerializedName("Y") var y: Long = 0,
+    @SerializedName("Speed") var speed: Int = 0,            // ×1000
+    @SerializedName("Course") var course: Int = 0,           // ×1000
+    @SerializedName("AltitudeDepth") var altitudeDepth: Int = 0,   // ×1000
+    @SerializedName("AssignedAltDepth") var assignedAltDepth: Int = 0,
+    @SerializedName("Ascent") var ascent: Int = 0,
+    @SerializedName("Descent") var descent: Int = 0,
+    @SerializedName("Number") var number: Int = 1,
+    @SerializedName("IsTurnTime") var isTurnTime: Boolean = true,
+    @SerializedName("PositionTime") var positionTime: String = ""
+)
+
+/** 传感器射程弧（桌面版 SensorArray 元素） */
+data class Sensor(
+    @SerializedName("Tag") var tag: String = "",
+    @SerializedName("Label") var label: String = "",
+    @SerializedName("MinRange") var minRange: Double = 0.0,
+    @SerializedName("MaxRange") var maxRange: Double = 0.0,
+    @SerializedName("StartAngle") var startAngle: Double = 0.0,
+    @SerializedName("ArcAngle") var arcAngle: Double = 0.0,
+    @SerializedName("ArcColor") var arcColor: String = "&h00000000",
+    @SerializedName("IsFilled") var isFilled: Boolean = false,
+    @SerializedName("IsVisible") var isVisible: Boolean = false
+)
+
+/** 武器射程弧（桌面版 WeaponArray 元素，结构与 Sensor 相同） */
+data class Weapon(
+    @SerializedName("Tag") var tag: String = "",
+    @SerializedName("Label") var label: String = "",
+    @SerializedName("MinRange") var minRange: Double = 0.0,
+    @SerializedName("MaxRange") var maxRange: Double = 0.0,
+    @SerializedName("StartAngle") var startAngle: Double = 0.0,
+    @SerializedName("ArcAngle") var arcAngle: Double = 0.0,
+    @SerializedName("ArcColor") var arcColor: String = "&h00000000",
+    @SerializedName("IsFilled") var isFilled: Boolean = false,
+    @SerializedName("IsVisible") var isVisible: Boolean = false
+)
+
+/**
+ * 标签显示设置（键序与桌面版一致：
+ * TagAltitude, TagCallsign, TagClass, TagCourseSpeed, TagDepth, TagName,
+ * TagTrackNum, TagUnitType, AdditionalText）
+ */
 data class TextTags(
-    @SerializedName("TagName") var tagName: Boolean = true,
-    @SerializedName("TagTrackNum") var tagTrackNum: Boolean = false,
-    @SerializedName("TagCourseSpeed") var tagCourseSpeed: Boolean = true,
-    @SerializedName("TagClass") var tagClass: Boolean = false,
-    @SerializedName("TagUnitType") var tagUnitType: Boolean = false,
     @SerializedName("TagAltitude") var tagAltitude: Boolean = false,
-    @SerializedName("TagDepth") var tagDepth: Boolean = false,
     @SerializedName("TagCallsign") var tagCallsign: Boolean = false,
+    @SerializedName("TagClass") var tagClass: Boolean = false,
+    @SerializedName("TagCourseSpeed") var tagCourseSpeed: Boolean = true,
+    @SerializedName("TagDepth") var tagDepth: Boolean = false,
+    @SerializedName("TagName") var tagName: Boolean = false,
+    @SerializedName("TagTrackNum") var tagTrackNum: Boolean = false,
+    @SerializedName("TagUnitType") var tagUnitType: Boolean = false,
     @SerializedName("AdditionalText") var additionalText: String = ""
 )
 
