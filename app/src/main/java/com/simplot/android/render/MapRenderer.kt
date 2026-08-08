@@ -188,7 +188,7 @@ class MapRenderer {
             style = Paint.Style.STROKE
         }
         // 计算网格间距（世界单位）—— 使屏幕间距 ≈ 80px
-        val worldPerPx = 1.0 / camera.zoom
+        val worldPerPx = 1.0f / camera.zoom
         val screenSpacing = 80f
         val worldSpacing = (worldPerPx * screenSpacing).toLong()
         val step = niceStep(worldSpacing)

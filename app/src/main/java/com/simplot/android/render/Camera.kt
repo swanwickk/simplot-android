@@ -1,5 +1,9 @@
 package com.simplot.android.render
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import kotlin.math.roundToLong
 
 /**
@@ -9,15 +13,18 @@ import kotlin.math.roundToLong
  * 屏幕坐标 = Canvas 像素
  *
  * 变换：screenX = (worldX - centerWorldX) * zoom + canvasWidth/2
+ *
+ * ⚠️ 字段均为 Compose snapshot state：手势/引擎修改后自动触发画布重组重绘
+ * （此前是普通 var，pan/zoom 后 Canvas 不重绘 → 拖动缩放“没反应”的根因）
  */
 class Camera {
-    var zoom: Float = 0.0015f                    // 世界单位 → 像素比例（初始近似）
-    var centerWorldX: Long = 0L
-    var centerWorldY: Long = 0L
+    var zoom by mutableFloatStateOf(0.0015f)                    // 世界单位 → 像素比例（初始近似）
+    var centerWorldX by mutableLongStateOf(0L)
+    var centerWorldY by mutableLongStateOf(0L)
 
     // 最小/最大缩放
-    var minZoom = 0.00001f
-    var maxZoom = 0.05f
+    var minZoom by mutableFloatStateOf(0.00001f)
+    var maxZoom by mutableFloatStateOf(0.05f)
 
     /** 世界坐标 → 屏幕坐标 */
     fun worldToScreen(wx: Long, wy: Long, canvasW: Int, canvasH: Int): Pair<Float, Float> {

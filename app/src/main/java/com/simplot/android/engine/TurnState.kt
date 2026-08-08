@@ -46,20 +46,10 @@ object TurnState {
         val minutes = interval.totalMinutes()
         val newPt = TimeUtil.advance(file.time.currentPositionTime, minutes)
 
-        if (stateBefore == State.DO_NEXT) {
-            // Next 后状态：TurnTime 同步推进，Turns 追加，Phase=0
-            file.time.currentTurnTime = newPt
-            file.time.currentPositionTime = newPt
-            val exists = file.turns.any { it.turnTime == newPt }
-            if (!exists) {
-                file.turns.add(Turn(turnTime = newPt, turnInterval = TurnInterval(interval.minutes, interval.seconds)))
-            }
-            file.scenario.phase = PHASE_PLOTTING
-        } else {
-            // Do 前 / Do 后 状态：TurnTime 不变，PositionTime 推进，Phase=2（可 Undo）
-            file.time.currentPositionTime = newPt
-            file.scenario.phase = PHASE_POST_MOVEMENT
-        }
+        // Do = 执行移动：无论何种前置状态，仅 PositionTime 推进；TurnTime 由 Next 追上
+        // （桌面版：Do 移动不推进回合时间；Next 确认时 TurnTime=PositionTime）
+        file.time.currentPositionTime = newPt
+        file.scenario.phase = PHASE_POST_MOVEMENT
         file.time.currentTurnInterval = TurnInterval(interval.minutes, interval.seconds)
     }
 

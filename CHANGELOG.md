@@ -5,6 +5,13 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.1] - 2026-08-08
+
+### 修复
+- **地图拖动/缩放仍无效（根因）**：Camera 的 zoom/center 是普通 var，手势修改后 Compose 不感知 → Canvas 不重绘，画面纹丝不动。改为 Compose snapshot state（mutableFloatStateOf/mutableLongStateOf），手势/引擎修改自动触发画布重绘
+- **Do 后回合时间一起动**：TurnState.advanceTime 的 DO_NEXT 分支（Next 后再次 Do）把 TurnTime 和 PositionTime 一起推进；内置示例自带轨迹 → 首次 Do 即命中。改为 Do 只推进 PositionTime，TurnTime 由 Next 追上（桌面版语义）
+- **回放末帧缺失/位置错误**（预先存在，ReplayTest 首次纳入跑批暴露）：buildTimeline 用最后轨迹点时间替代当前时间 → 丢帧；positionAt 在 t=当前时间时返回最后轨迹点而非当前位置。修复后 35 测试全过
+
 ## [0.2.0] - 2026-08-08
 
 功能补齐 + 交互修复。对照桌面版反编译分析（用户 2026-08-08 提供）完成 P1-P3 全部待办。

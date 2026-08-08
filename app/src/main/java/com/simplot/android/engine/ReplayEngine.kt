@@ -42,11 +42,8 @@ object ReplayEngine {
                 if (wp.positionTime.isNotBlank()) times.add(wp.positionTime)
             }
         }
-        // 当前位置时间（最后轨迹点时间；无轨迹则用 PositionTime）
-        for (u in file.units) {
-            val last = u.pastWaypointArray.lastOrNull()?.positionTime
-            times.add(last?.takeIf { it.isNotBlank() } ?: file.time.currentPositionTime)
-        }
+        // 当前时间帧（单位当前位置对应的时刻，必须作为末帧）
+        times.add(file.time.currentPositionTime)
         if (times.isEmpty()) return emptyList()
 
         val list = times.toList()
@@ -63,6 +60,10 @@ object ReplayEngine {
 
     /** 单位在指定时刻的位置（按轨迹点时间戳插值到"最后已知"） */
     private fun positionAt(u: Unit, t: String, file: ScenarioFile): UnitPos {
+        // t 已到当前时间 → 当前位置（最后轨迹点之后单位已移动）
+        if (t >= file.time.currentPositionTime) {
+            return UnitPos(u.idNum, u.side, u.name, u.x, u.y)
+        }
         val target = TimeUtil.parse(t)
         var best: UnitPos? = null
         for (wp in u.pastWaypointArray) {
