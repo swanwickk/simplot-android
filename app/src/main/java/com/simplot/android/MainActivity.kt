@@ -52,9 +52,9 @@ class MainActivity : ComponentActivity() {
     private val pickDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { saveThreeFiles(it) }
     }
-    // 地图选择
+    // 地图选择：支持官方 MapMaker JSON 配置（BoundaryRect）或图片
     private val pickMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { mapRenderer.loadMapImage(contentResolver, it) }
+        uri?.let { loadMapFile(it) }
     }
 
     // 场景状态
@@ -81,9 +81,75 @@ class MainActivity : ComponentActivity() {
         try {
             val loaded = repo.load(uri)
             applyLoaded(loaded)
+            // 场景自带地图（MapFileName 指向同目录 JSON 配置）
+            loaded.scenario.mapFileName.takeIf { it.isNotBlank() }?.let { mapName ->
+                autoLoadMap(mapName, uri)
+            }
         } catch (e: Exception) {
             toast("加载失败：${e.message}")
         }
+    }
+
+    /**
+     * 加载地图文件：
+     * - .json → MapMaker 配置（解析 BoundaryRect，背景图名记录待同目录加载）
+     * - 图片  → 直接作为地图位图
+     */
+    private fun loadMapFile(uri: Uri) {
+        try {
+            val name = queryDisplayName(uri)?.lowercase() ?: ""
+            if (name.endsWith(".json")) {
+                val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: throw IllegalStateException("无法读取地图配置")
+                mapRenderer.parseMapConfigJson(text)
+                toast("地图配置已加载${if (mapRenderer.pendingBackgroundName != null) "：${mapRenderer.pendingBackgroundName}" else ""}")
+            } else {
+                mapRenderer.loadMapImage(contentResolver, uri)
+                toast("地图图片已加载")
+            }
+        } catch (e: Exception) {
+            toast("地图加载失败：${e.message}")
+        }
+    }
+
+    /** 场景 MapFileName 指向的地图：尝试从场景同目录解析配置 + 背景图 */
+    private fun autoLoadMap(mapName: String, scenarioUri: Uri) {
+        try {
+            val cfgUri = findSibling(scenarioUri, mapName)
+            if (cfgUri != null) {
+                val text = contentResolver.openInputStream(cfgUri)?.bufferedReader()?.use { it.readText() }
+                    ?: return
+                mapRenderer.parseMapConfigJson(text)
+                // 背景图：配置同目录的 BackgroundFileName
+                mapRenderer.pendingBackgroundName?.let { bg ->
+                    val bgUri = findSibling(scenarioUri, bg)
+                    if (bgUri != null) mapRenderer.loadMapImage(contentResolver, bgUri)
+                }
+                toast("已加载地图：$mapName")
+            }
+        } catch (e: Exception) {
+            // 地图缺失不阻塞场景加载
+        }
+    }
+
+    /** 在 URI 所在目录按文件名查找兄弟文件（替换 document id 最后一段，文件名需 URL 编码） */
+    private fun findSibling(uri: Uri, name: String): Uri? {
+        val docId = uri.lastPathSegment ?: return null
+        val slash = docId.lastIndexOf('/')
+        val parent = if (slash >= 0) docId.substring(0, slash + 1) else ""
+        // name 含空格等字符（如 "Iron Bottom Sound Image.png"），必须编码
+        return Uri.parse("content://" + uri.authority + "/document/" + parent + Uri.encode(name))
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) c.getString(idx) else null
+                } else null
+            }
+        } catch (e: Exception) { null }
     }
 
     private fun loadSample(name: String) {

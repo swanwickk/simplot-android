@@ -73,12 +73,22 @@ fun SceneCanvas(
         // 地图贴图（如有）
         mapRenderer.drawBitmap(drawContext.canvas.nativeCanvas, camera, w, h)
 
+        // 陆地/覆盖多边形 + 标注（官方地图）
+        mapRenderer.drawPolygons(drawContext.canvas.nativeCanvas, camera, w, h)
+
         // 网格
         mapRenderer.drawGrid(drawContext.canvas.nativeCanvas, camera, w, h)
 
         // 轨迹
         for (u in file.units) {
             TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
+        }
+
+        // 传感器/武器射程弧（在单位下方绘制）
+        if (!replaying) {
+            for (u in file.units) {
+                ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
+            }
         }
 
         // 单位：回放模式用帧位置；正常模式用实时位置
