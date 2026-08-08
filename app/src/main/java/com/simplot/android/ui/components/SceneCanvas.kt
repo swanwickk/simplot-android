@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
+import com.simplot.android.engine.ReplayEngine
 import com.simplot.android.render.Camera
 import com.simplot.android.render.MapRenderer
 import com.simplot.android.render.TrackRenderer
@@ -22,6 +23,7 @@ import kotlin.math.abs
  * - 双指捏合缩放
  * - 轻点选择单位
  * - 长按弹出单位编辑（回调上层）
+ * - 回放模式：传入 [replayFrame] 时按帧位置渲染（不响应点选编辑）
  */
 @Composable
 fun SceneCanvas(
@@ -31,8 +33,10 @@ fun SceneCanvas(
     selectedUnitId: String?,
     onSelect: (String?) -> kotlin.Unit,
     onLongPress: (Unit) -> kotlin.Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    replayFrame: ReplayEngine.Frame? = null
 ) {
+    val replaying = replayFrame != null
     Canvas(
         modifier = modifier
             .pointerInput(Unit) {
@@ -46,6 +50,7 @@ fun SceneCanvas(
                 }
             }
             .pointerInput(file) {
+                if (replaying) return@pointerInput   // 回放模式下不响应点选
                 detectTapGestures(
                     onTap = { pos ->
                         // 命中检测：点选单位
@@ -71,15 +76,30 @@ fun SceneCanvas(
         // 网格
         mapRenderer.drawGrid(drawContext.canvas.nativeCanvas, camera, w, h)
 
-        // 轨迹 + 单位
+        // 轨迹
         for (u in file.units) {
             TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
         }
-        for (u in file.units) {
-            val (sx, sy) = camera.worldToScreen(u.x, u.y, w, h)
-            if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
-                UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy, selected = u.idNum == selectedUnitId)
-                drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy)
+
+        // 单位：回放模式用帧位置；正常模式用实时位置
+        if (replaying && replayFrame != null) {
+            val posById = replayFrame.positions
+            for (u in file.units) {
+                val pos = posById[u.idNum] ?: continue
+                val (sx, sy) = camera.worldToScreen(pos.x, pos.y, w, h)
+                if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
+                    val frameUnit = u.copy(x = pos.x, y = pos.y)
+                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy)
+                    drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy)
+                }
+            }
+        } else {
+            for (u in file.units) {
+                val (sx, sy) = camera.worldToScreen(u.x, u.y, w, h)
+                if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
+                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy, selected = u.idNum == selectedUnitId)
+                    drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy)
+                }
             }
         }
 

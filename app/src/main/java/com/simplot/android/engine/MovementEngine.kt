@@ -30,12 +30,20 @@ object MovementEngine {
 
     // ============ 单位运动指令 ============
 
+    /**
+     * 航速指令（对应移动指南 §3.2 三种写法，三选一）：
+     * - [boost]/[decel]：无数字的“提速/减速”，按尺寸等级能力最大值调整（boost 按当前航速选 0-75%/75-100% 档）
+     * - [speedDelta]：明确的“加速X节/减速X节”（负数=减速）
+     * - [newSpeed]：具体航速（节），校验本回合是否能达到；达不到按实际可达航速
+     */
     data class UnitMove(
         val idNum: String,
         var newCourse: Double? = null,      // 指定新航向（度）
         var courseDelta: Double? = null,    // 相对转向量（度，右正左负）
-        var newSpeed: Double? = null,       // 指定新航速（节）
-        var speedDelta: Double? = null,     // 相对加减速（节）
+        var newSpeed: Double? = null,       // 指定新航速（节）——具体航速写法
+        var speedDelta: Double? = null,     // 相对加减速（节，负数=减速）——加速X节写法
+        var boost: Boolean = false,         // “提速”无数字 → 按能力表最大加速
+        var decel: Boolean = false,         // “减速”无数字 → 按能力表最大减速
         var newAltitude: Int? = null,       // 飞机新高度（米）
         var newDepth: Int? = null,          // 潜艇新深度（米）
         var emergency: Boolean = false      // 急舵
@@ -53,6 +61,8 @@ object MovementEngine {
         val curTime = file.time.currentPositionTime
         // 必须在移动前捕获状态（移动会写入轨迹点，影响 detect）
         val stateBefore = TurnState.detect(file)
+        // 保存 undo 快照（深拷贝，不落盘）
+        file.undoSnapshot = file.units.map { deepCopyUnit(it) }
 
         for (u in file.units) {
             if (u.isNewThisTurn) continue   // 新单位当回合不移动
@@ -61,6 +71,16 @@ object MovementEngine {
         }
 
         TurnState.advanceTime(file, interval, stateBefore)
+    }
+
+    /** 深拷贝单位（保留瞬态字段） */
+    private fun deepCopyUnit(src: Unit): Unit {
+        val gson = com.simplot.android.data.codec.JsonUtil.gson
+        val copy = gson.fromJson(gson.toJson(src), Unit::class.java)
+        // 瞬态字段手动复制
+        copy.isNewThisTurn = src.isNewThisTurn
+        copy.maxSpeedKnots = src.maxSpeedKnots
+        return copy
     }
 
     private fun applyUnitMove(file: ScenarioFile, u: Unit, move: UnitMove?, minutes: Double, curTime: String) {
@@ -74,18 +94,46 @@ object MovementEngine {
         if (move?.courseDelta != null) newCourse = (oldCourse + move.courseDelta!!) % 360.0
         if (newCourse < 0) newCourse += 360.0   // 规范化到 0-360
 
-        // 新航速：原速 + 加减速 - 转向损失（每 45° 按表）
+        // 新航速：三写法（具体航速 / 加速X节 / 提速减速无数字）+ 转向损失（每 45° 按表）
         val delta = minimalDelta(oldCourse, newCourse)
         val turnCount = turnCount(delta)
         val turnLoss = turnCount * turnLossKnots(u, emergency)
-        var newSpeed = oldSpeed
-        if (move?.newSpeed != null) newSpeed = move.newSpeed!!
-        if (move?.speedDelta != null) {
-            var accel = move.speedDelta!!
-            if (accel > 0 && abs(delta) >= 45) accel /= 2.0  // 转向≥45° 加速减半
-            newSpeed = oldSpeed + accel
+        val lv = SizeLevels.of(u)
+
+        // 加速能力（0-75% / 75-100% 档，按当前航速 vs 最大航速×75% 选择）
+        val accelCap = if (accelHighLane(u)) lv.accelHigh else lv.accel
+
+        var newSpeed: Double
+        when {
+            // 写法一：具体航速 —— 校验本回合是否能达到；达不到按实际可达
+            // 可达航速 = 原速 + 加速能力（转向≥45°减半） − 转向损失
+            move?.newSpeed != null -> {
+                val accelEff = if (abs(delta) >= 45) accelCap / 2.0 else accelCap
+                val reachable = oldSpeed + accelEff - turnLoss
+                newSpeed = minOf(move.newSpeed!!, reachable)
+                // 写法一的目标值即最终航速，不再重复扣转向损失
+            }
+            // 写法二：加速X节 / 减速X节（转向≥45°加速减半）
+            move?.speedDelta != null -> {
+                var accel = move.speedDelta!!
+                if (accel > 0 && abs(delta) >= 45) accel /= 2.0  // 转向≥45° 加速减半
+                newSpeed = oldSpeed + accel - turnLoss
+            }
+            // 写法三a：提速（无数字）→ 按能力表最大加速（转向≥45°减半）
+            move?.boost == true -> {
+                var accel = accelCap
+                if (abs(delta) >= 45) accel /= 2.0
+                newSpeed = oldSpeed + accel - turnLoss
+            }
+            // 写法三b：减速（无数字）→ 按能力表最大减速
+            move?.decel == true -> {
+                newSpeed = oldSpeed - lv.decel - turnLoss
+            }
+            // 未指定航速 → 保持原速，但转向损失照扣
+            else -> {
+                newSpeed = oldSpeed - turnLoss
+            }
         }
-        newSpeed -= turnLoss
         if (newSpeed < 0) newSpeed = 0.0
 
         // 高度/深度
@@ -214,6 +262,15 @@ object MovementEngine {
 
     fun altDepthOf(u: Unit): Int = u.altitude ?: u.depth ?: 0
 
+    /**
+     * 75% 加速档判定（移动指南 §3.1/§11.6）：
+     * 当前航速 > 最大航速×75% 时用 accelHigh 列；无最大航速信息默认第一列。
+     */
+    fun accelHighLane(u: Unit): Boolean {
+        val max = u.maxSpeedKnots ?: return false
+        return u.speedKnots() > max * 0.75
+    }
+
     private fun makeWaypoint(u: Unit, ts: String): Waypoint {
         return Waypoint(
             x = u.x, y = u.y,
@@ -257,6 +314,7 @@ object SizeLevels {
     }
 
     fun of(unit: com.simplot.android.data.model.Unit): SizeLevel {
-        return TABLE[levelName(unit.unitClass, null)] ?: TABLE["B"]!!
+        // maxSpeedKnots 接入：A 级快慢判定（≥25=快速A）与 F 级（≥30=快速F）
+        return TABLE[levelName(unit.unitClass, unit.maxSpeedKnots)] ?: TABLE["B"]!!
     }
 }

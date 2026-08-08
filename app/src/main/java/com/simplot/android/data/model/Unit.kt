@@ -53,7 +53,10 @@ data class Unit(
     @SerializedName("PerceptionArray") var perceptionArray: MutableList<Perception>? = null,
 
     /** 瞬态标记：本回合新加入的单位不移动（不落盘，Gson 忽略） */
-    @Transient var isNewThisTurn: Boolean = false
+    @Transient var isNewThisTurn: Boolean = false,
+
+    /** 瞬态：最大航速（节），由舰船信息表填写；用于 A 级快慢判定与 75% 加速档（不落盘） */
+    @Transient var maxSpeedKnots: Double? = null
 ) {
     // ---- 便捷换算（节/度/米） ----
     fun speedKnots(): Double = speed / 1000.0

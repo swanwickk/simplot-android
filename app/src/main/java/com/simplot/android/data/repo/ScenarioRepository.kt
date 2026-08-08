@@ -52,7 +52,10 @@ class ScenarioRepository(private val context: Context) {
     // ============ 保存（三文件） ============
 
     /**
-     * 需求一：保存裁判场景，自动生成三文件。
+     * 需求一：保存裁判场景，自动生成四个文件（与桌面版 Save Scenario 一致）：
+     * - <场景名>.json → Referee 明文
+     * - Blue.SpScn / Red.SpScn → 红蓝混淆
+     * - player_settings.json → 玩家本地显示设置（已存在则不覆盖）
      * @param directory 已选中的场景目录 URI（SAF tree uri）
      * @param fileName  场景文件名主体（不含扩展名），如 "冰海巨兽"
      * @param data      裁判全量数据（File 字段会被覆盖为对应视角）
@@ -61,10 +64,11 @@ class ScenarioRepository(private val context: Context) {
         saveJson(childOrCreate(directory, "$fileName.json"), data.copy(file = "Referee"))
         saveScn(childOrCreate(directory, "Blue.SpScn"), data.copy(file = "Blue"))
         saveScn(childOrCreate(directory, "Red.SpScn"), data.copy(file = "Red"))
+        ensurePlayerSettings(directory)
     }
 
     /**
-     * 需求二：保存三文件，红蓝存档按感知过滤。
+     * 需求二：保存四文件，红蓝存档按感知过滤。
      * 需要调用方提供 FogOfWar 过滤后的视图：
      * @param refereeData 裁判全量
      * @param blueView    蓝方可见视图
@@ -77,6 +81,25 @@ class ScenarioRepository(private val context: Context) {
         saveJson(childOrCreate(directory, "$fileName.json"), refereeData.copy(file = "Referee"))
         saveScn(childOrCreate(directory, "Blue.SpScn"), blueView.copy(file = "Blue"))
         saveScn(childOrCreate(directory, "Red.SpScn"), redView.copy(file = "Red"))
+        ensurePlayerSettings(directory)
+    }
+
+    /**
+     * player_settings.json：玩家本地显示设置（桌面版 40+ 显示开关，非共享数据）。
+     * 仅当不存在时创建默认值（玩家设置优先，不覆盖）。
+     */
+    fun ensurePlayerSettings(directory: Uri) {
+        val name = "player_settings.json"
+        if (findChild(directory, name) != null) return
+        val uri = DocumentsContract.createDocument(
+            context.contentResolver, directory, "application/json", name
+        ) ?: return
+        writeBytes(uri, SpScnCodec.toJsonFileBytes(DEFAULT_PLAYER_SETTINGS))
+    }
+
+    companion object {
+        /** 默认玩家显示设置（对应桌面版 player_settings.json 常见开关） */
+        const val DEFAULT_PLAYER_SETTINGS: String = """{"ShowTracks":true,"ShowTrackTimes":false,"ShowTurnTrackTimes":false,"ShowUnits":true,"ShowTextTags":true,"ShowSensors":false,"ShowWeapons":false,"ShowGrid":true,"ShowScale":true,"ShowArcs":false,"ShowBearings":false}"""
     }
 
     fun saveJson(uri: Uri, data: ScenarioFile) {

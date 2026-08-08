@@ -100,6 +100,14 @@ object FogOfWar {
 
     /**
      * 生成某阵营视角的完整 ScenarioFile（深拷贝，不污染原数据）。
+     *
+     * 落盘规则（与桌面版一致）：
+     * - 不可见单位（无该阵营 Perception 记录且已启用迷雾）→ 剔除
+     * - 可见单位 → 按该阵营 Perception 记录的受限项脱敏：
+     *   ShowName=false→名称清空；ShowCourseSpeed=false→航向航速清零；
+     *   ShowClass=false→级别清空；ShowAsType→类型替换；ShowAsSide→阵营替换；
+     *   ShowAltitude/ShowDepth=false→高度/深度清零
+     *
      * @param source 裁判全量数据
      * @param side   "Blue" / "Red"
      */
@@ -108,10 +116,38 @@ object FogOfWar {
         val visible = visibleUnits(copy.units, side)
         copy.units = visible.toMutableList()
         copy.objects = visible.map { it.idNum }.toMutableList()
-        // 玩家视角下，感知字段对己方无意义（自己总能看到全部），清空以保持简洁并兼容桌面版
-        visible.forEach { it.perceptionArray = null }
+        // 玩家视角：己方单位全知（清感知）；敌方可见单位按受限项脱敏
+        visible.forEach { unit ->
+            if (unit.side == side) {
+                unit.perceptionArray = null
+            } else {
+                applyRestrictions(unit, side)
+                unit.perceptionArray = null
+            }
+        }
         copy.file = side
         return copy
+    }
+
+    /**
+     * 对单位应用指定阵营感知记录的受限项脱敏（就地修改）。
+     * 无该阵营感知记录 → 视为全可见（不脱敏）。
+     */
+    fun applyRestrictions(unit: Unit, side: String) {
+        val rec = unit.perceptionArray?.firstOrNull { p ->
+            p.seenBySide == side || p.seenBySide.equals(side, ignoreCase = true)
+        } ?: return
+
+        if (!rec.showName) unit.name = ""
+        if (!rec.showCourseSpeed) {
+            unit.speed = 0
+            unit.course = 0
+        }
+        if (!rec.showClass) unit.unitClass = ""
+        if (rec.showAsType.isNotBlank()) unit.unitType = rec.showAsType
+        if (rec.showAsSide.isNotBlank() && rec.showAsSide != unit.side) unit.side = rec.showAsSide
+        if (!rec.showAltitude) unit.altitude = null
+        if (!rec.showDepth) unit.depth = null
     }
 
     /**

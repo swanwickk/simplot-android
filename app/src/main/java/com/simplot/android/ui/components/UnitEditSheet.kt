@@ -52,6 +52,14 @@ fun UnitEditSheet(
     var visibleBlue by remember { mutableStateOf(com.simplot.android.engine.FogOfWar.isVisibleTo(unit, "Blue")) }
     var visibleRed by remember { mutableStateOf(com.simplot.android.engine.FogOfWar.isVisibleTo(unit, "Red")) }
 
+    // 受限项（需求二：对可见单位的脱敏设置，取 Blue 感知记录的值作为编辑状态）
+    val blueRec = unit.perceptionArray?.firstOrNull { it.seenBySide == "Blue" }
+    var showNameBlue by remember { mutableStateOf(blueRec?.showName ?: true) }
+    var showCSBlue by remember { mutableStateOf(blueRec?.showCourseSpeed ?: true) }
+    var showClassBlue by remember { mutableStateOf(blueRec?.showClass ?: true) }
+    var showTypeBlue by remember { mutableStateOf(blueRec?.showAsType ?: "") }
+    var showSideBlue by remember { mutableStateOf(blueRec?.showAsSide ?: "") }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(unit.name.ifEmpty { unit.idNum }) },
@@ -97,6 +105,35 @@ fun UnitEditSheet(
                     Text("对红方可见")
                 }
 
+                // 受限项（脱敏）：蓝方可见时的显示限制
+                Text("受限项（蓝方视角）", style = MaterialTheme.typography.labelMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = showNameBlue, onCheckedChange = { showNameBlue = it })
+                    Text("显示名称")
+                    Checkbox(checked = showCSBlue, onCheckedChange = { showCSBlue = it })
+                    Text("显示航向航速")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = showClassBlue, onCheckedChange = { showClassBlue = it })
+                    Text("显示级别")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("显示为类型：", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = showTypeBlue, onValueChange = { showTypeBlue = it },
+                        label = { Text("留空=真实类型") },
+                        singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("显示为阵营：", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = showSideBlue, onValueChange = { showSideBlue = it },
+                        label = { Text("留空=真实阵营") },
+                        singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                }
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = sunk, onCheckedChange = { sunk = it })
                     Text("沉没")
@@ -120,6 +157,15 @@ fun UnitEditSheet(
                     unit, "Red", visibleRed, unit.positionTimeCreated,
                     file = null
                 )
+                // 受限项写回 Blue 感知记录（仅当该单位对蓝方可见且有记录时）
+                val bluePer = unit.perceptionArray?.firstOrNull { it.seenBySide == "Blue" }
+                if (bluePer != null && visibleBlue) {
+                    bluePer.showName = showNameBlue
+                    bluePer.showCourseSpeed = showCSBlue
+                    bluePer.showClass = showClassBlue
+                    bluePer.showAsType = showTypeBlue
+                    bluePer.showAsSide = showSideBlue
+                }
                 onApply(unit)
                 onDismiss()
             }) { Text("应用") }

@@ -78,11 +78,25 @@ object TurnState {
         file.time.currentTurnInterval = TurnInterval(interval.minutes, interval.seconds)
     }
 
-    /** Undo：将 PositionTime 回退一个回合时长，Phase 回 0 */
+    /**
+     * Undo：回退一个回合。
+     * - 有快照 → 恢复单位状态（位置/航向/航速/轨迹/Range）
+     * - PositionTime 回退一个回合时长，Phase 回 0，Turns 移除该回合记录
+     */
     fun undo(file: ScenarioFile, interval: TurnInterval) {
         val minutes = interval.totalMinutes()
-        val back = TimeUtil.advance(file.time.currentPositionTime, -minutes)
+        val ptBefore = file.time.currentPositionTime   // 回退前的位置时间
+        val back = TimeUtil.advance(ptBefore, -minutes)
         file.time.currentPositionTime = back
         file.scenario.phase = PHASE_PLOTTING
+        // 恢复单位状态（深拷贝快照）
+        file.undoSnapshot?.let { snap ->
+            file.units.clear()
+            file.units.addAll(snap)
+            file.objects = file.units.map { it.idNum }.toMutableList()
+        }
+        // 移除刚确认回合（TurnTime == 回退前 PositionTime）的 Turns 记录
+        file.turns.removeAll { it.turnTime == ptBefore }
+        file.undoSnapshot = null
     }
 }
