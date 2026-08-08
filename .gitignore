@@ -10,3 +10,6 @@
 .cxx
 *.apk
 !gradle/wrapper/gradle-wrapper.jar
+
+# Kotlin compiler internal logs
+.kotlin/
