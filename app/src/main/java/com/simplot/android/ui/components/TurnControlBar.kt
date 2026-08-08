@@ -103,9 +103,9 @@ fun TurnControlBar(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Button(onClick = onDo, modifier = Modifier.weight(1f)) { Text("Do 移动") }
-                Button(onClick = onUndo, modifier = Modifier.weight(1f)) { Text("Undo") }
-                Button(onClick = onNext, modifier = Modifier.weight(1f)) { Text("Next 确认") }
+                Button(onClick = onDo, enabled = TurnState.canDo(state), modifier = Modifier.weight(1f)) { Text("Do 移动") }
+                Button(onClick = onUndo, enabled = TurnState.canUndo(state), modifier = Modifier.weight(1f)) { Text("Undo") }
+                Button(onClick = onNext, enabled = TurnState.canNext(state), modifier = Modifier.weight(1f)) { Text("Next 确认") }
             }
         }
     }

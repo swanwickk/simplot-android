@@ -123,7 +123,8 @@ class MapRenderer {
         val worldPerPx = mapScaleMetersPerPx / metersPerWorldUnit * 100000.0
         val mapWorldW = bmp.width * worldPerPx
         val mapWorldH = bmp.height * worldPerPx
-        val (sx0, sy0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY, canvasW, canvasH)
+        // 翻转后北边（大 Y）在屏幕上方：取北边（minY + H）作左上角，与 boundary 分支一致
+        val (sx0, sy0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY + mapWorldH.toLong(), canvasW, canvasH)
         val screenW = (mapWorldW * camera.zoom).toFloat()
         val screenH = (mapWorldH * camera.zoom).toFloat()
         val rect = android.graphics.RectF(sx0, sy0, sx0 + screenW, sy0 + screenH)
@@ -241,10 +242,12 @@ class MapRenderer {
         if (p.hasBoundary) {
             val w = p.boundaryWidth * 10
             val h = p.boundaryHeight * 10
-            val (x0, y0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY, canvasW, canvasH)
-            val (x1, y1) = camera.worldToScreen(p.mapWorldMinX + w, p.mapWorldMinY + h, canvasW, canvasH)
-            val rect = android.graphics.RectF(x0, y0, x1, y1)
-            canvas.drawRect(rect.left, rect.top, rect.right, rect.bottom, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            // 翻转后：左上角 = 北边（minY + h）经 worldToScreen；尺寸 = 世界尺寸 × zoom
+            // （与 drawBitmap 同构，避免翻转后 top>bottom 倒置）
+            val (x0, y0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY + h, canvasW, canvasH)
+            val screenW = (w * camera.zoom).toFloat()
+            val screenH = (h * camera.zoom).toFloat()
+            canvas.drawRect(x0, y0, x0 + screenW, y0 + screenH, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.argb(220, 120, 60, 60)
                 style = Paint.Style.STROKE
                 strokeWidth = 2f

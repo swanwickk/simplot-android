@@ -8,6 +8,9 @@ import kotlin.math.roundToLong
  * 世界坐标 = 存档文件坐标（海里×100000）；屏幕坐标 = Canvas 像素。
  * 变换：screenX = (worldX - centerX) * zoom + canvasWidth/2
  *
+ * ⚠️ Y 翻转（反馈①⑤）：世界 Y 北为正（0°=北顺时针），屏幕 Y 向下为正 →
+ * 渲染层翻转：screenY = canvasHeight/2 - (worldY - centerY) * zoom（北在上）。
+ *
  * 所有函数纯计算，不持有状态；状态由 [Camera]（Compose snapshot）持有。
  */
 object CameraMath {
@@ -18,7 +21,8 @@ object CameraMath {
         canvasW: Int, canvasH: Int
     ): Pair<Float, Float> {
         val sx = ((wx - centerX) * zoom) + canvasW / 2f
-        val sy = ((wy - centerY) * zoom) + canvasH / 2f
+        // Y 翻转：世界 Y 大（北）→ 屏幕 sy 小（上方）
+        val sy = canvasH / 2f - ((wy - centerY) * zoom)
         return sx to sy
     }
 
@@ -28,7 +32,8 @@ object CameraMath {
         canvasW: Int, canvasH: Int
     ): Pair<Long, Long> {
         val wx = ((sx - canvasW / 2f) / zoom).roundToLong() + centerX
-        val wy = ((sy - canvasH / 2f) / zoom).roundToLong() + centerY
+        // Y 翻转：与 worldToScreen 保持互逆（屏幕上方 sy 小 → 世界北 wy 大）
+        val wy = ((canvasH / 2f - sy) / zoom).roundToLong() + centerY
         return wx to wy
     }
 
@@ -45,9 +50,9 @@ object CameraMath {
         return Triple(newZoom, centerX + before.first - after.first, centerY + before.second - after.second)
     }
 
-    /** 平移（屏幕像素偏移）→ 新中心 */
+    /** 平移（屏幕像素偏移）→ 新中心；Y 分量符号随翻转调整（内容下拉 deltaSy>0 → 中心 Y 增大） */
     fun pan(deltaSx: Float, deltaSy: Float, centerX: Long, centerY: Long, zoom: Float): Pair<Long, Long> {
-        return (centerX - (deltaSx / zoom).roundToLong()) to (centerY - (deltaSy / zoom).roundToLong())
+        return (centerX - (deltaSx / zoom).roundToLong()) to (centerY + (deltaSy / zoom).roundToLong())
     }
 
     /** 自适应缩放使世界范围可见 → (zoom, centerX, centerY) */

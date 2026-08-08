@@ -40,6 +40,17 @@ object TurnState {
         State.DO_NEXT -> "回合已确认"
     }
 
+    // ---- 门禁（反馈②③）：纯函数，供按钮 enabled + VM 防御共用；引擎本体 advanceTime/confirmNext/undo 不改 ----
+
+    /** Do 仅在非 DO_AFTER 状态可用（DO_BEFORE 初动 / DO_NEXT 新一轮） */
+    fun canDo(state: State) = state != State.DO_AFTER
+
+    /** Undo 仅在 DO_AFTER（Do 后未确认）可用 */
+    fun canUndo(state: State) = state == State.DO_AFTER
+
+    /** Next 仅在 DO_AFTER（Do 后未确认）可用 */
+    fun canNext(state: State) = state == State.DO_AFTER
+
     /** 是否为"推进后"状态（Do 后 / Next 后），决定时间推进方式
      *  @param stateBefore 移动前的状态（必须在使用轨迹点判断前捕获） */
     fun advanceTime(file: ScenarioFile, interval: TurnInterval, stateBefore: State = detect(file)) {
@@ -72,6 +83,9 @@ object TurnState {
      * Undo：回退一个回合。
      * - 有快照 → 恢复单位状态（位置/航向/航速/轨迹/Range）
      * - PositionTime 回退一个回合时长，Phase 回 0，Turns 移除该回合记录
+     *
+     * ⚠️ 危险路径（反馈②③）：DO_BEFORE（初始）下直接调用会把 PositionTime 回退到初始之前
+     * 并清空快照 → 必须由 VM 层门禁（canUndo）拦截，本函数保持纯引擎语义不设防。
      */
     fun undo(file: ScenarioFile, interval: TurnInterval) {
         val minutes = interval.totalMinutes()

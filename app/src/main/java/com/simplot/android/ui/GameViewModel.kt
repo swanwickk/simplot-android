@@ -221,6 +221,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun doTurn() {
         val f = file ?: return
+        // 门禁（反馈②③）：非 DO_BEFORE/DO_NEXT 状态禁止 Do，不产生任何副作用
+        if (!TurnState.canDo(TurnState.detect(f))) { toast("当前状态不可 Do（请先 Undo 或 Next）"); return }
         MovementEngine.advance(f, f.time.currentTurnInterval)
         revision++
         // Range 耗尽检测：桌面版三选弹窗（Continue/Delete/Stop）；已选"继续移动"不再提示
@@ -230,6 +232,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun undo() {
         val f = file ?: return
+        // 门禁（反馈②③）：仅 Do 后未确认可 Undo（拦截 DO_BEFORE 下回退时间的危险路径）
+        if (!TurnState.canUndo(TurnState.detect(f))) { toast("当前状态不可 Undo"); return }
         TurnState.undo(f, f.time.currentTurnInterval)
         revision++
         toast("Undo")
@@ -237,6 +241,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun next() {
         val f = file ?: return
+        // 门禁（反馈②③）：仅 Do 后未确认可 Next
+        if (!TurnState.canNext(TurnState.detect(f))) { toast("请先 Do 再 Next 确认"); return }
         TurnState.confirmNext(f, f.time.currentTurnInterval)
         revision++
         toast("Next：回合已确认")

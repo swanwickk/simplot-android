@@ -5,6 +5,19 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.3] - 2026-08-08
+
+六个反馈问题修复（Y 翻转 / 回合门禁 / Do 即时刷新 / 标签字号）。
+
+### 修复
+- **示例初设坐标完全不对 + 航向/航迹奇怪（同根因）**：`CameraMath.worldToScreen/screenToWorld` 缺少 Y 轴翻转（世界 Y 北为正、屏幕 Y 向下）→ 场景垂直镜像（北显示在下方）。渲染层补齐翻转（北在上），`pan` Y 分量符号同步调整；`MapRenderer` txt 格式贴图分支改取北边作左上角、多边形边界框改「左上角+尺寸」画法避免倒置。存档坐标字段零改动，仅渲染层修正
+- **Do/Undo/Next 按钮逻辑错误 + 可无限按**：`TurnState` 状态机此前未用于门禁——新增纯函数 `canDo/canUndo/canNext`（DO_BEFORE 只能 Do；DO_AFTER 只能 Undo/Next；DO_NEXT 只能 Do）；`TurnControlBar` 三按钮按状态机 `enabled`（非法按钮灰显）；`GameViewModel.doTurn/undo/next` 加防御（非法状态 toast 提示 + 直接 return，零副作用）。引擎本体（advanceTime/confirmNext/undo）语义未改
+- **按 Do 后单位不实时移动（需拖动地图才刷新）**：画布绘制阶段读的是普通字段、不注册 Compose 快照依赖，tick 参数变化触发的重组未带动 draw 失效。改为画布内显式快照机制：`LaunchedEffect(tick) { drawEpoch = tick }` + draw lambda 首行读 `drawEpoch` → 版本号变化必重绘（对一切 revision++ 操作生效：Do/Undo/编辑/复制/护航队/回放）
+- **标注单位字体仍太小**：v0.3.2 字号公式 `11f·zoom/0.0015f` 下限 8f 在示例场景（fitBounds 后 zoom≈0.0011）撞下限不可读。基准字号提至 16f、下限 12f、上限 40f，抽为纯函数 `UnitRenderer.labelTextSize/labelScaleK`（可单测），锚点偏移规则不变
+
+### 其他
+- 71 测试全过（新增 CameraMath 翻转断言 ×3、TurnStateGateTest 门禁矩阵/闭环/危险路径 ×3、UnitRendererTest 字号 clamp ×3）
+
 ## [0.3.2] - 2026-08-08
 
 三个 Bug 修复（阵营显示 / 标签缩放 / 手势冲突）。

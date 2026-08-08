@@ -1,0 +1,35 @@
+package com.simplot.android
+
+import com.simplot.android.render.UnitRenderer
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+/**
+ * 单位渲染纯函数测试（反馈⑥）：标签字号/锚点偏移系数随 zoom 缩放 + clamp。
+ */
+class UnitRendererTest {
+
+    @Test
+    fun `label text size scales with zoom`() {
+        // 默认 zoom（LABEL_BASE_ZOOM）→ 16f；下限 12f；上限 40f
+        assertEquals(16f, UnitRenderer.labelTextSize(0.0015f), 0.001f)
+        assertEquals(12f, UnitRenderer.labelTextSize(0.0007f), 0.001f)   // 撞下限（拉普拉塔默认视野）
+        assertEquals(40f, UnitRenderer.labelTextSize(0.05f), 0.001f)     // 撞上限（放大）
+    }
+
+    @Test
+    fun `label text size clamps at extremes`() {
+        // 极远缩放 → 下限 12f；极大放大 → 上限 40f
+        assertEquals(12f, UnitRenderer.labelTextSize(0.00001f), 0.001f)
+        assertEquals(40f, UnitRenderer.labelTextSize(1f), 0.001f)
+    }
+
+    @Test
+    fun `label scale k clamps between 07 and 25`() {
+        // 锚点偏移系数：默认 1.0，clamp [0.7, 2.5]
+        assertEquals(0.7f, UnitRenderer.labelScaleK(0.00001f), 0.001f)
+        assertEquals(1f, UnitRenderer.labelScaleK(0.0015f), 0.001f)
+        assertEquals(2.5f, UnitRenderer.labelScaleK(0.05f), 0.001f)
+        assertEquals(2.5f, UnitRenderer.labelScaleK(1f), 0.001f)
+    }
+}

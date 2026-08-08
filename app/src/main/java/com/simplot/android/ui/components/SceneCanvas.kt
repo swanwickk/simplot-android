@@ -5,7 +5,9 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -49,8 +51,11 @@ fun SceneCanvas(
     symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
 ) {
     val replaying = replayFrame != null
-    // 读取 tick 建立重组依赖：回合推进/编辑后重绘（file 引用不变）
-    @Suppress("UNUSED_EXPRESSION") tick
+    // 重绘纪元（反馈④）：tick 变化 → LaunchedEffect 快照写；draw 阶段快照读（epoch）→ 必重绘。
+    // 修复：revision++ 触发的重组在 compose-ui 1.7.0 下未带动 draw 失效，
+    // 通过 draw 内显式快照读保证 epoch 变化即重绘（Do/编辑/复制/护航队/Undo 均覆盖）。
+    var drawEpoch by remember { mutableIntStateOf(0) }
+    LaunchedEffect(tick) { drawEpoch = tick }
     // 仅在新场景首次布局时自适应视野；用户手动平移/缩放后不再重置
     var fittedFile by remember(file) { mutableStateOf<ScenarioFile?>(null) }
     // 测量状态（桌面版 Measurement.AddNewMeasure/ExtendMeasure）
@@ -128,6 +133,9 @@ fun SceneCanvas(
     ) {
         val w = size.width.toInt()
         val h = size.height.toInt()
+
+        // draw 阶段快照读：epoch 变化 → Canvas 失效重绘（④ 修复核心）
+        @Suppress("UNUSED_VARIABLE") val epoch = drawEpoch
 
         // 背景
         drawRect(androidx.compose.ui.graphics.Color(0xFFF0F2F5))
@@ -208,18 +216,15 @@ fun SceneCanvas(
     }
 }
 
-/** 标签字号/偏移基准缩放：与 [Camera] 初始 zoom（0.0015f）一致，作为“1 倍”参考 */
-private const val BASE_ZOOM = 0.0015f
-
-/** 标签绘制（名称 + 航向航速）：字号与锚点偏移随 zoom 等比缩放（Bug 2） */
+/** 标签绘制（名称 + 航向航速）：字号与锚点偏移随 zoom 等比缩放（Bug 2 / 反馈⑥） */
 private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, sy: Float, zoom: Float) {
     val tag = u.textTags
     if (!tag.tagName && !tag.tagCourseSpeed) return
-    // k = 缩放比例（zoom/BASE_ZOOM，默认 zoom 下 k=1 与原 11f/10/-8 行为一致），clamp 防极端值
-    val k = (zoom / BASE_ZOOM).coerceIn(0.7f, 2.5f)
+    // k = 缩放比例（UnitRenderer.labelScaleK：zoom/LABEL_BASE_ZOOM，clamp 0.7..2.5，默认 zoom 下 k=1）
+    val k = UnitRenderer.labelScaleK(zoom)
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = UnitRenderer.colorOf(u.side)
-        textSize = (11f * (zoom / BASE_ZOOM)).coerceIn(8f, 28f)
+        textSize = UnitRenderer.labelTextSize(zoom)
     }
     val parts = mutableListOf<String>()
     if (tag.tagName && u.name.isNotEmpty()) parts.add(u.name)

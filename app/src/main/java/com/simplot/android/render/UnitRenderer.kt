@@ -29,6 +29,15 @@ object UnitRenderer {
 
     fun colorOf(side: String): Int = sideColors[side] ?: 0xFF5A5A5A.toInt()
 
+    /** 标签基准缩放：默认视野（Camera 初始 zoom）下的“1 倍”参考（反馈⑥） */
+    const val LABEL_BASE_ZOOM = 0.0015f
+
+    /** 标签字号（反馈⑥）：默认 16f，随 zoom 等比缩放，clamp [12f, 40f] 保证可读且不过大 */
+    fun labelTextSize(zoom: Float): Float = (16f * (zoom / LABEL_BASE_ZOOM)).coerceIn(12f, 40f)
+
+    /** 标签锚点偏移系数（反馈⑥）：zoom/LABEL_BASE_ZOOM，clamp [0.7f, 2.5f]（偏移规则本身不变） */
+    fun labelScaleK(zoom: Float): Float = (zoom / LABEL_BASE_ZOOM).coerceIn(0.7f, 2.5f)
+
     fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false, symbolStyle: SymbolStyle = SymbolStyle.NTDS) {
         // 速度领导线（桌面版 SpeedLeaders.Draw）：沿航向向前，长度与航速成比例
         if (u.speedKnots() > 0) {
