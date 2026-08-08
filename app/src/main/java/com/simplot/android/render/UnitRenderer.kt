@@ -21,6 +21,20 @@ object UnitRenderer {
     fun colorOf(side: String): Int = sideColors[side] ?: Color.rgb(90, 90, 90)
 
     fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false) {
+        // 速度领导线（桌面版 SpeedLeaders.Draw）：沿航向向前，长度与航速成比例
+        if (u.speedKnots() > 0) {
+            val leaderLen = (u.speedKnots() * 2.2).coerceAtLeast(10.0).coerceAtMost(90.0).toFloat()
+            val hdgRad = Math.toRadians(u.courseDeg())
+            val lx = sx + (leaderLen * kotlin.math.sin(hdgRad)).toFloat()
+            val ly = sy - (leaderLen * kotlin.math.cos(hdgRad)).toFloat()
+            val leader = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = colorOf(u.side)
+                style = Paint.Style.STROKE
+                strokeWidth = 1.5f
+                alpha = 180
+            }
+            canvas.drawLine(sx, sy, lx, ly, leader)
+        }
         val sideColor = colorOf(u.side)
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = sideColor

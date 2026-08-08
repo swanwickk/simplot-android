@@ -1,16 +1,23 @@
 package com.simplot.android.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -27,9 +34,15 @@ fun ReplayBar(
     playing: Boolean,
     onFrameChange: (Int) -> Unit,
     onPlayPause: () -> Unit,
+    onSpeedChange: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (timeline.isEmpty()) return
+    // 倍速（桌面版 PopupSpeed：1x/2x/4x/8x）
+    val speeds = listOf(1000L, 500L, 250L, 125L)
+    val speedLabels = listOf("1x", "2x", "4x", "8x")
+    var speedIdx by remember { mutableStateOf(0) }
+    var menuOpen by remember { mutableStateOf(false) }
 
     Surface(tonalElevation = 3.dp) {
         Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -56,6 +69,23 @@ fun ReplayBar(
                 }
                 Button(onClick = { onFrameChange((frameIndex + 1).coerceAtMost(timeline.size - 1)) }, modifier = Modifier.weight(1f)) {
                     Text("下帧 ▶")
+                }
+                Box(Modifier.weight(1f)) {
+                    Button(onClick = { menuOpen = true }) {
+                        Text("${speedLabels[speedIdx]} ⏩")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        speedLabels.forEachIndexed { i, label ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    speedIdx = i
+                                    menuOpen = false
+                                    onSpeedChange(speeds[i])
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }

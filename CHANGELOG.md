@@ -5,6 +5,33 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.0] - 2026-08-08
+
+功能补齐 + 交互修复。对照桌面版反编译分析（用户 2026-08-08 提供）完成 P1-P3 全部待办。
+
+### 修复
+- **地图手势失效**：`detectTransformGestures` 回调把 centroid 丢弃、`zoom != 1f` 浮点比较吞掉 pan（单指拖动恒走缩放分支）→ 改为阈值判断 + pan/zoom 同时处理 + 双指中心锚点
+- **视野自适应错误**：fitBounds 硬编码 1000×1000 → 改为 onSizeChanged 按真实画布尺寸，仅新场景首次布局时执行（不覆盖用户手势）
+- **回合时间/位置时间不刷新**：`file = f` 引用不变导致 Compose 不重组 → 引入 turnTick 状态驱动重组
+
+### 新增
+- **地图绘制层补齐**（桌面版 Z 序）：水域名 / 深度色带(5级) / 国家名 / 城市 / 国界线 / 地图边界框
+- **高度/深度引擎**：ChangeAltitude/ChangeDepth 向航路点 AssignedAltDepth 趋近，Ascent/Descent 速率，单回合上限 180 米
+- **航路点归档**：到达航路点后移入 PastWaypointArray（轨迹/回放）
+- **编队移动**（Compass 模式）：成员相对中心单位按 FormationBearing/Distance 重定位
+- **测量工具**：拖拽画线 + 实时方位/距离显示（桌面版 Measurement）
+- **新位置计算器**：参考单位 + 方位角 + 距离 → 坐标（桌面版 ContainerNewPosition）
+- **单位复制**：深拷贝 + 新 IdNum/TrackNumber + 2 海里偏移（陆上单位不复制传感器/武器）
+- **护航队生成**：COMMODORE 居中 + 6 Merchant 环绕（2000 码均匀分布）
+- **运动命令导出**：Movement - Player.json（桌面版 WindowExportOrders）
+- **Range 耗尽三选弹窗**：继续移动 / 删除单位 / 停止单位（桌面版 HasRangeRemaining）
+- **速度领导线**：单位前方与航速成比例的指示线（桌面版 SpeedLeaders）
+- **回放倍速**：1x/2x/4x/8x（桌面版 PopupSpeed）
+
+### 验证
+- 33 个 JUnit 测试全过
+- 非 Compose 层 kotlinc 编译通过；完整 Gradle 构建成功
+
 ## [0.1.1] - 2026-08-08
 
 ### 修复

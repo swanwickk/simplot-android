@@ -40,6 +40,7 @@ fun UnitEditSheet(
     unit: Unit,
     onApply: (Unit) -> kotlin.Unit,
     onDelete: (Unit) -> kotlin.Unit,
+    onDuplicate: (Unit) -> kotlin.Unit = {},
     onDismiss: () -> kotlin.Unit
 ) {
     var course by remember { mutableFloatStateOf(unit.courseDeg().toFloat()) }

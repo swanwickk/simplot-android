@@ -45,6 +45,14 @@ class MapRenderer {
     private val miscPaths = mutableListOf<Pair<Path, Int>>()   // Path, colorName 索引
     private val labels = mutableListOf<Triple<String, Long, Long>>()  // text, x, y
 
+    // ---- 桌面版完整绘制层（Draw 顺序：Waters→DepthPolys→Land→Countries→Cities→Border→MapBoundary）----
+    private val waterLabels = mutableListOf<Triple<String, Long, Long>>()    // 水域名
+    private val depthPolys = mutableListOf<Pair<Path, Int>>()                // 深度色带 (Path, 级别)
+    private val cityLabels = mutableListOf<Triple<String, Long, Long>>()     // 城市 (text, x, y)
+    private val countryLabels = mutableListOf<Triple<String, Long, Long>>()  // 国家名
+    private val borderPaths = mutableListOf<Path>()                          // 国界线
+    private val depthTexts = mutableListOf<String>()                          // 深度标签（纯字符串，如 "Depth1"）
+
     fun loadMapImage(contentResolver: ContentResolver, uri: Uri) {
         bitmap = BitmapFactory.decodeStream(contentResolver.openInputStream(uri))
     }
@@ -86,13 +94,64 @@ class MapRenderer {
         }
         // 文字标注
         labels.clear()
-        root.getAsJsonArray("Misc Labels")?.forEach { el ->
+        parseLabelArray(root.getAsJsonArray("Misc Labels"), labels)
+
+        // ---- 桌面版完整层 ----
+        // 水域名（Water Labels: {Name, X, Y, Rotation, IsMajor}）
+        waterLabels.clear()
+        parseLabelArray(root.getAsJsonArray("Water Labels"), waterLabels)
+        // 城市（City Labels: {Name, X, Y, Position}）
+        cityLabels.clear()
+        parseLabelArray(root.getAsJsonArray("City Labels"), cityLabels)
+        // 国家名（Country Labels: {Name, X, Y, Rotation}）
+        countryLabels.clear()
+        parseLabelArray(root.getAsJsonArray("Country Labels"), countryLabels)
+        // 深度色带（Depth Polygons: {Name, DepthLevelIndex, Path}；字符串形式跳过）
+        depthPolys.clear()
+        root.getAsJsonArray("Depth Polygons")?.forEach { el ->
+            if (!el.isJsonObject) return@forEach
+            val o = el.asJsonObject
+            val pathArr = o.getAsJsonArray("Path") ?: return@forEach
+            val lvl = (o.get("DepthLevelIndex")?.asInt ?: 0).coerceIn(0, 4)
+            depthPolys.add(pathFromArray(pathArr) to lvl)
+        }
+        // 深度标签（Depth Labels: 字符串数组或对象数组）
+        depthTexts.clear()
+        root.getAsJsonArray("Depth Labels")?.forEach { el ->
+            if (el.isJsonPrimitive) depthTexts.add(el.asString)
+        }
+        // 国界线（Border Polys: {Name, Path}）
+        borderPaths.clear()
+        root.getAsJsonArray("Border Polys")?.forEach { el ->
+            if (!el.isJsonObject) return@forEach
+            val pathArr = el.asJsonObject.getAsJsonArray("Path") ?: return@forEach
+            borderPaths.add(pathFromArray(pathArr))
+        }
+    }
+
+    private fun parseLabelArray(arr: JsonArray?, sink: MutableList<Triple<String, Long, Long>>) {
+        if (arr == null) return
+        arr.forEach { el ->
+            if (!el.isJsonObject) return@forEach
             val o = el.asJsonObject
             val name = o.get("Name")?.asString ?: return@forEach
             val x = (o.get("X")?.asLong ?: 0L) * 10
             val y = (o.get("Y")?.asLong ?: 0L) * 10
-            labels.add(Triple(name, x, y))
+            sink.add(Triple(name, x, y))
         }
+    }
+
+    private fun pathFromArray(pathArr: JsonArray): Path {
+        val path = Path()
+        var first = true
+        for (i in 0 until pathArr.size() step 2) {
+            val x = pathArr.get(i).asLong * 10
+            val y = pathArr.get(i + 1).asLong * 10
+            if (first) { path.moveTo(x.toFloat(), y.toFloat()); first = false }
+            else path.lineTo(x.toFloat(), y.toFloat())
+        }
+        path.close()
+        return path
     }
 
     private fun parsePolygons(arr: JsonArray?, sink: (Path, Int) -> Unit) {
@@ -200,8 +259,39 @@ class MapRenderer {
         canvas.drawBitmap(bmp, null, rect, paint)
     }
 
-    /** 绘制陆地多边形（官方 JSON 格式），颜色：陆地=灰绿，覆盖=蓝/红半透明 */
+    /** 绘制地图要素层（桌面版 Z 序：Waters→DepthPolys→Land→Countries→Cities→Border→Misc→标注） */
     fun drawPolygons(canvas: Canvas, camera: Camera, canvasW: Int, canvasH: Int) {
+        // 水域名（浅蓝半透明文字）
+        val waterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(160, 70, 120, 180)
+            textSize = 14f
+            isFakeBoldText = true
+        }
+        for ((text, x, y) in waterLabels) {
+            val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
+            if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
+                canvas.drawText(text, sx, sy, waterPaint)
+            }
+        }
+
+        // 深度色带（5 级：浅蓝→深蓝）
+        val depthColors = listOf(
+            Color.argb(60, 200, 220, 240),
+            Color.argb(80, 160, 195, 225),
+            Color.argb(100, 120, 170, 210),
+            Color.argb(120, 85, 145, 195),
+            Color.argb(140, 50, 115, 180)
+        )
+        depthPolys.forEach { (path, lvl) ->
+            val sp = screenPath(path, camera, canvasW, canvasH)
+            if (sp != null) {
+                canvas.drawPath(sp, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = depthColors[lvl % depthColors.size]
+                    style = Paint.Style.FILL
+                })
+            }
+        }
+
         val landPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(120, 150, 170, 130)
             style = Paint.Style.FILL
@@ -224,6 +314,39 @@ class MapRenderer {
                 canvas.drawPath(sp, landStroke)
             }
         }
+        // 国界线（红色虚线风格描边）
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(200, 180, 60, 60)
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f
+        }
+        for (path in borderPaths) {
+            val sp = screenPath(path, camera, canvasW, canvasH)
+            if (sp != null) canvas.drawPath(sp, borderPaint)
+        }
+        // 国家名
+        val countryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(200, 90, 70, 40)
+            textSize = 13f
+            isFakeBoldText = true
+        }
+        for ((text, x, y) in countryLabels) {
+            val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
+            if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
+                canvas.drawText(text, sx, sy, countryPaint)
+            }
+        }
+        // 城市（黑色小字）
+        val cityPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(200, 40, 40, 40)
+            textSize = 11f
+        }
+        for ((text, x, y) in cityLabels) {
+            val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
+            if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
+                canvas.drawText(text, sx + 3f, sy + 3f, cityPaint)
+            }
+        }
         miscPaths.forEach { (path, idx) ->
             val sp = screenPath(path, camera, canvasW, canvasH)
             if (sp != null) {
@@ -240,6 +363,19 @@ class MapRenderer {
             if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
                 canvas.drawText(text, sx + 4f, sy - 4f, labelPaint)
             }
+        }
+        // 地图边界框（桌面版 DrawMapBoundary）
+        if (hasBoundary) {
+            val w = boundaryWidth * 10
+            val h = boundaryHeight * 10
+            val (x0, y0) = camera.worldToScreen(mapWorldMinX, mapWorldMinY, canvasW, canvasH)
+            val (x1, y1) = camera.worldToScreen(mapWorldMinX + w, mapWorldMinY + h, canvasW, canvasH)
+            val rect = android.graphics.RectF(x0, y0, x1, y1)
+            canvas.drawRect(rect.left, rect.top, rect.right, rect.bottom, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(220, 120, 60, 60)
+                style = Paint.Style.STROKE
+                strokeWidth = 2f
+            })
         }
     }
 

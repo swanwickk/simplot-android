@@ -35,12 +35,14 @@ fun TurnControlBar(
     onDo: () -> Unit,
     onUndo: () -> Unit,
     onNext: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    tick: Int = 0
 ) {
     // 回合时长编辑状态（分钟/秒）
     var minutesText by remember { mutableStateOf(file.time.currentTurnInterval.minutes.toString()) }
     var secondsText by remember { mutableStateOf(file.time.currentTurnInterval.seconds.toString()) }
 
+    @Suppress("UNUSED_EXPRESSION") tick
     val state = TurnState.detect(file)
     val interval = file.time.currentTurnInterval
 

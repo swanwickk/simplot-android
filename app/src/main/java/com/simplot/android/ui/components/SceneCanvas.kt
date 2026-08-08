@@ -1,15 +1,22 @@
 package com.simplot.android.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
+import com.simplot.android.data.util.CoordUtil
 import com.simplot.android.engine.ReplayEngine
 import com.simplot.android.render.ArcRenderer
 import com.simplot.android.render.Camera
@@ -35,34 +42,78 @@ fun SceneCanvas(
     onSelect: (String?) -> kotlin.Unit,
     onLongPress: (Unit) -> kotlin.Unit,
     modifier: Modifier = Modifier,
-    replayFrame: ReplayEngine.Frame? = null
+    replayFrame: ReplayEngine.Frame? = null,
+    tick: Int = 0,
+    measureMode: Boolean = false,
+    onMeasureDone: (() -> kotlin.Unit)? = null
 ) {
     val replaying = replayFrame != null
+    // 读取 tick 建立重组依赖：回合推进/编辑后重绘（file 引用不变）
+    @Suppress("UNUSED_EXPRESSION") tick
+    // 仅在新场景首次布局时自适应视野；用户手动平移/缩放后不再重置
+    var fittedFile by remember(file) { mutableStateOf<ScenarioFile?>(null) }
+    // 测量状态（桌面版 Measurement.AddNewMeasure/ExtendMeasure）
+    var measureStart by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var measureEnd by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     Canvas(
         modifier = modifier
+            .onSizeChanged { size ->
+                // 仅新场景首次布局时自适应视野（场景单位范围），避免覆盖用户手势
+                if (size.width > 0 && size.height > 0 && fittedFile !== file) {
+                    fittedFile = file
+                    val xs = file.units.map { it.x }
+                    val ys = file.units.map { it.y }
+                    if (xs.isNotEmpty()) {
+                        camera.fitBounds(xs.min(), xs.max(), ys.min(), ys.max(), size.width, size.height)
+                    }
+                }
+            }
             .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    if (zoom != 1f) {
-                        // 以画布中心为锚缩放
-                        camera.zoomAt(zoom, size.width / 2f, size.height / 2f, size.width.toInt(), size.height.toInt())
-                    } else if (abs(pan.x) > 1f || abs(pan.y) > 1f) {
+                detectTransformGestures { centroid, pan, zoom, _ ->
+                    // 缩放：以双指中心为锚点（阈值判断，避免浮点噪声吞掉 pan）
+                    if (abs(zoom - 1f) > 0.001f) {
+                        camera.zoomAt(zoom, centroid.x, centroid.y, size.width, size.height)
+                    }
+                    // 平移：始终生效（单指拖动 / 双指缩放时跟随）
+                    if (abs(pan.x) > 0.5f || abs(pan.y) > 0.5f) {
                         camera.pan(pan.x, pan.y)
                     }
                 }
             }
             .pointerInput(file) {
                 if (replaying) return@pointerInput   // 回放模式下不响应点选
-                detectTapGestures(
-                    onTap = { pos ->
-                        // 命中检测：点选单位
-                        val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt())
-                        onSelect(hit?.idNum)
-                    },
-                    onLongPress = { pos ->
-                        val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt())
-                        if (hit != null) onLongPress(hit)
-                    }
-                )
+                if (measureMode) {
+                    // 测量模式：按下=起点，拖拽=延伸，抬起=完成（桌面版 AddNewMeasure/ExtendMeasure）
+                    detectDragGestures(
+                        onDragStart = { pos ->
+                            val (wx, wy) = camera.screenToWorld(pos.x, pos.y, size.width, size.height)
+                            measureStart = wx to wy
+                            measureEnd = wx to wy
+                        },
+                        onDrag = { change, _ ->
+                            val (wx, wy) = camera.screenToWorld(change.position.x, change.position.y, size.width, size.height)
+                            measureEnd = wx to wy
+                        },
+                        onDragEnd = {
+                            onMeasureDone?.invoke()
+                        },
+                        onDragCancel = {
+                            measureStart = null; measureEnd = null
+                        }
+                    )
+                } else {
+                    detectTapGestures(
+                        onTap = { pos ->
+                            // 命中检测：点选单位
+                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt())
+                            onSelect(hit?.idNum)
+                        },
+                        onLongPress = { pos ->
+                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt())
+                            if (hit != null) onLongPress(hit)
+                        }
+                    )
+                }
             }
     ) {
         val w = size.width.toInt()
@@ -112,6 +163,34 @@ fun SceneCanvas(
                     drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy)
                 }
             }
+        }
+
+        // 测量线（桌面版 Measurement）：起点→终点 + 方位/距离标签
+        val ms = measureStart
+        val me = measureEnd
+        if (ms != null && me != null) {
+            val nc = drawContext.canvas.nativeCanvas
+            val (sx0, sy0) = camera.worldToScreen(ms.first, ms.second, w, h)
+            val (sx1, sy1) = camera.worldToScreen(me.first, me.second, w, h)
+            val mPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.argb(230, 220, 60, 40)
+                strokeWidth = 3f
+                style = android.graphics.Paint.Style.STROKE
+            }
+            nc.drawLine(sx0, sy0, sx1, sy1, mPaint)
+            nc.drawCircle(sx0, sy0, 8f, mPaint)
+            val distNm = CoordUtil.distanceNm(ms.first, ms.second, me.first, me.second)
+            val bearing = CoordUtil.bearingDeg(ms.first, ms.second, me.first, me.second)
+            val label = String.format("%.1f nmi  方位 %.0f°", distNm, bearing)
+            val tPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                textSize = 16f
+            }
+            val midX = (sx0 + sx1) / 2f
+            val midY = (sy0 + sy1) / 2f - 14f
+            nc.drawText(label, midX + 2f, midY + 2f, tPaint)
+            tPaint.color = android.graphics.Color.argb(255, 220, 60, 40)
+            nc.drawText(label, midX, midY, tPaint)
         }
 
         // 坐标比例尺条（右下角）

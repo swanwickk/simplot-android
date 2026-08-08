@@ -70,7 +70,96 @@ object MovementEngine {
             applyUnitMove(file, u, move, minutes, curTime)
         }
 
+        // 高度/深度随航路点调整（桌面版 ChangeAltitude/ChangeDepth）：
+        // 每回合向首个未来航路点的 AssignedAltDepth 趋近，按 Ascent/Descent 速率，
+        // 单回合变化上限 180（×1000 定点，即 180 米/回合，桌面版 180 常量）
+        for (u in file.units) {
+            if (u.isNewThisTurn) continue
+            applyAltitudeDepth(u)
+            archiveReachedWaypoint(u, distOfTurn = newSpeedOf(u) * minutes / 60.0)
+        }
+
+        // 编队移动（桌面版 Formations.Move，Compass 模式）：
+        // 编队成员相对中心单位按罗盘方位角+距离重定位（中心已移动）
+        moveFormations(file.units)
+
         TurnState.advanceTime(file, interval, stateBefore)
+    }
+
+    /**
+     * 编队移动（桌面版 MoveCompassFormation）：
+     * 对每个非中心成员，位置 = 中心单位位置 + FormationDistance × (Sin/Cos FormationBearing)。
+     * 中心判定：IsFormationCenter，或同 FormationName 编队中第一个单位（无显式中心时）。
+     */
+    private fun moveFormations(units: MutableList<Unit>) {
+        // 按 FormationName 分组；空名/未在编队跳过
+        val groups = units.filter { it.isInFormation && it.formationName.isNotBlank() }
+            .groupBy { it.formationName }
+        for ((name, members) in groups) {
+            val center = members.firstOrNull { it.isFormationCenter }
+                ?: members.firstOrNull() ?: continue
+            val centerId = center.idNum
+            for (m in members) {
+                if (m.idNum == centerId || m.isFormationCenter) continue
+                if (m.isNewThisTurn) continue
+                val bearingRad = Math.toRadians(m.formationBearing.toDouble() / 1000.0)
+                val distFile = m.formationDistance.toDouble() * CoordUtil.NMI_SCALE
+                m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
+                m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
+            }
+        }
+    }
+
+    /** 当前航速（节） */
+    private fun newSpeedOf(u: Unit): Double = u.speedKnots()
+
+    /**
+     * 高度/深度引擎：向首个未来航路点指定的高度/深度趋近。
+     * - 目标 = waypoint.assignedAltDepth（×1000 定点米）
+     * - 速率 = waypoint.ascent/descent（×1000），为 0 时按单回合上限 180 米
+     * - 单回合最大变化 180000（= 180 米 × 1000，桌面版 180 常量）
+     */
+    private fun applyAltitudeDepth(u: Unit) {
+        val wp = u.futureWaypointArray.firstOrNull() ?: return
+        if (u.altitude != null) {
+            val target = wp.assignedAltDepth * 1000L
+            val cur = u.altitude!!.toLong()
+            val rate = if (target > cur) (wp.ascent * 1000L).coerceAtLeast(180000L) else (wp.descent * 1000L).coerceAtLeast(180000L)
+            val step = minOf(rate, 180000L)
+            u.altitude = when {
+                target > cur -> minOf(target, cur + step)
+                target < cur -> maxOf(target, cur - step)
+                else -> cur
+            }.toInt()
+        }
+        if (u.depth != null) {
+            val target = wp.assignedAltDepth * 1000L
+            val cur = u.depth!!.toLong()
+            val rate = if (target > cur) (wp.ascent * 1000L).coerceAtLeast(180000L) else (wp.descent * 1000L).coerceAtLeast(180000L)
+            val step = minOf(rate, 180000L)
+            u.depth = when {
+                target > cur -> minOf(target, cur + step)
+                target < cur -> maxOf(target, cur - step)
+                else -> cur
+            }.toInt()
+        }
+    }
+
+    /**
+     * 航路点归档（桌面版 ArchiveFutureWaypoint）：单位到达首个未来航路点附近后
+     * 将其移到 PastWaypointArray 末尾（含该点位置/时间，供轨迹与回放）。
+     * 到达判定：距离 ≤ 本回合移动距离（海里）× 文件单位，或已贴点（≤ 1 海里）。
+     */
+    private fun archiveReachedWaypoint(u: Unit, distOfTurn: Double) {
+        val wp = u.futureWaypointArray.firstOrNull() ?: return
+        val dx = (u.x - wp.x).toDouble()
+        val dy = (u.y - wp.y).toDouble()
+        val distFile = kotlin.math.sqrt(dx * dx + dy * dy)
+        val threshold = maxOf(distOfTurn * CoordUtil.NMI_SCALE.toDouble(), CoordUtil.NMI_SCALE.toDouble())
+        if (distFile <= threshold) {
+            u.futureWaypointArray.removeAt(0)
+            u.pastWaypointArray.add(wp)
+        }
     }
 
     /** 深拷贝单位（保留瞬态字段） */
