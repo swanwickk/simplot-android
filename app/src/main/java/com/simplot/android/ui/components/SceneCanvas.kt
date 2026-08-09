@@ -231,19 +231,21 @@ fun SceneCanvas(
                     val midX = (selX + tx) / 2f
                     val midY = (selY + ty) / 2f - 6f
                     val lines = listOf(d.name, String.format("%.1f nmi %.0f°", d.distNm, d.bearingDeg))
+                    // 契约6：辅助线标签与单位名称统一走 labelTextSize（随 zoom 缩放），行高随字号
+                    val labelSize = UnitRenderer.labelTextSize(camera.zoom)
                     val outlinePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                         color = android.graphics.Color.BLACK
                         style = android.graphics.Paint.Style.STROKE
                         strokeWidth = 4f
-                        textSize = 17f
+                        textSize = labelSize
                         textAlign = android.graphics.Paint.Align.CENTER
                     }
                     val fillPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                         color = android.graphics.Color.WHITE
-                        textSize = 17f
+                        textSize = labelSize
                         textAlign = android.graphics.Paint.Align.CENTER
                     }
-                    val lineHeight = 20f
+                    val lineHeight = labelSize * 1.2f
                     var textY = midY - (lines.size - 1) * lineHeight / 2f + 5f
                     for (line in lines) {
                         nc.drawText(line, midX, textY, outlinePaint)
@@ -291,15 +293,17 @@ private fun drawMeasureLine(
     val midX = (sx0 + sx1) / 2f
     val midY = (sy0 + sy1) / 2f - 14f
     // 两遍画法：先黑描边再白填充（同坐标，无偏移阴影），任何底色可读
+    // 契约6：测量标签与单位名称统一走 labelTextSize（随 zoom 缩放）
+    val labelSize = UnitRenderer.labelTextSize(camera.zoom)
     val strokePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.BLACK
         style = android.graphics.Paint.Style.STROKE
         strokeWidth = 4f
-        textSize = 20f
+        textSize = labelSize
     }
     val fillPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.WHITE
-        textSize = 20f
+        textSize = labelSize
     }
     canvas.drawText(label, midX, midY, strokePaint)
     canvas.drawText(label, midX, midY, fillPaint)
@@ -344,11 +348,11 @@ private fun drawScaleBar(canvas: android.graphics.Canvas, w: Int, h: Int) {
         color = android.graphics.Color.BLACK
         style = android.graphics.Paint.Style.STROKE
         strokeWidth = 4f
-        textSize = 15f
+        textSize = 20f
     }
     val fillPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.WHITE
-        textSize = 15f
+        textSize = 20f
     }
     canvas.drawText("50 nmi", x0, y0 - 8f, strokePaint)
     canvas.drawText("50 nmi", x0, y0 - 8f, fillPaint)
