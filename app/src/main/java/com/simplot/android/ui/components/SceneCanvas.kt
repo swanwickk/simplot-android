@@ -29,6 +29,7 @@ import com.simplot.android.render.MapRenderer
 import com.simplot.android.render.TrackRenderer
 import com.simplot.android.render.UnitRenderer
 import kotlin.math.abs
+import kotlin.math.max
 
 /**
  * 海图主画布（触摸交互核心）：
@@ -128,7 +129,7 @@ fun SceneCanvas(
                         }
                         if (!isDrag) {
                             // 轻点：选中单位（不 consume；空白则 hit=null → onSelect(null) 取消选中）
-                            val hit = hitTest(file.units, camera, down.position, size.width.toInt(), size.height.toInt())
+                            val hit = hitTest(file.units, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom)
                             onSelect(hit?.idNum)
                         } else if (completed && start != null && last != null) {
                             // 仅在手势正常完成（非取消）时记录测量线，避免半条线（N1）
@@ -141,11 +142,11 @@ fun SceneCanvas(
                     detectTapGestures(
                         onTap = { pos ->
                             // 命中检测：点选单位
-                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt())
+                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt(), camera.zoom)
                             onSelect(hit?.idNum)
                         },
                         onLongPress = { pos ->
-                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt())
+                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt(), camera.zoom)
                             if (hit != null) onLongPress(hit)
                         }
                     )
@@ -190,7 +191,8 @@ fun SceneCanvas(
                 val (sx, sy) = camera.worldToScreen(pos.x, pos.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     val frameUnit = u.copy(x = pos.x, y = pos.y)
-                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, symbolStyle = symbolStyle)
+                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy,
+                        sizePx = UnitRenderer.iconSizePx(camera.zoom), symbolStyle = symbolStyle)
                     drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom)
                 }
             }
@@ -198,7 +200,8 @@ fun SceneCanvas(
             for (u in file.units) {
                 val (sx, sy) = camera.worldToScreen(u.x, u.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
-                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy, selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle)
+                    UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy,
+                        sizePx = UnitRenderer.iconSizePx(camera.zoom), selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle)
                     drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom)
                 }
             }
@@ -358,9 +361,9 @@ private fun drawScaleBar(canvas: android.graphics.Canvas, w: Int, h: Int) {
     canvas.drawText("50 nmi", x0, y0 - 8f, fillPaint)
 }
 
-/** 命中检测：返回被点中的单位（若有） */
-internal fun hitTest(units: List<Unit>, camera: Camera, pos: Offset, w: Int, h: Int): Unit? {
-    val hitRadius = 20f
+/** 命中检测：返回被点中的单位（若有）。hitRadius 随 zoom 放大（契约7：与图标尺寸同链路，放大后易选中） */
+internal fun hitTest(units: List<Unit>, camera: Camera, pos: Offset, w: Int, h: Int, zoom: Float = camera.zoom): Unit? {
+    val hitRadius = max(20f, UnitRenderer.iconSizePx(zoom) * 1.2f)
     var best: Unit? = null
     var bestDist = hitRadius * hitRadius
     for (u in units) {

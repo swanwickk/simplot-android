@@ -23,15 +23,6 @@ class ScenarioRepository(private val context: Context) {
 
     // ============ 读取 ============
 
-    /** 从内置 assets 加载示例场景 */
-    fun loadFromAssets(assetName: String): ScenarioFile {
-        val text = context.assets.open("scenarios/$assetName").bufferedReader().use { it.readText() }
-        if (!JsonUtil.isScenarioJson(text)) {
-            throw IllegalArgumentException("内置场景无效：$assetName")
-        }
-        return JsonUtil.fromJson(text)
-    }
-
     /**
      * 从任意 URI 读取存档（自动识别明文 .json / 混淆 .SpScn）
      */

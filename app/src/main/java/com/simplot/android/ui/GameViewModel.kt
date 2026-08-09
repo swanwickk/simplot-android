@@ -102,14 +102,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun loadSample(name: String) {
-        try {
-            applyLoaded(repo.loadFromAssets(name))
-        } catch (e: Exception) {
-            toast("示例加载失败：${e.message}")
-        }
-    }
-
     fun applyLoaded(loaded: ScenarioFile) {
         file = loaded
         selectedUnitId = null

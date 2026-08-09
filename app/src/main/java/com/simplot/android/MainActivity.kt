@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -30,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.simplot.android.data.util.CoordUtil
@@ -75,6 +77,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 契约7：注入应用级 Context 供 UnitRenderer 懒加载 CWS 精灵图（assets/symbols/）
+        com.simplot.android.render.UnitRenderer.init(applicationContext)
         setContent {
             SimPlotTheme {
                 val viewModel: GameViewModel = viewModel()
@@ -115,6 +119,15 @@ class MainActivity : ComponentActivity() {
                     val replaying = vm.replayTimeline.isNotEmpty()
                     // ② 点选单位自动测量：仅非回放且非测量模式且选中单位时计算（selectedUnitId 变更即重组刷新）
                     val unitDist = if (!replaying && !vm.measureMode) vm.selectedUnitId?.let { unitDistances(f, it) } else null
+                    // 契约7：选中单位 → 显性操作条（编辑入口显性化；测量/回放中不显示，长按编辑路径保留）
+                    val selUnit = vm.selectedUnitId?.let { id -> f.units.firstOrNull { it.idNum == id } }
+                    if (selUnit != null && !vm.measureMode && !replaying) {
+                        SelectedUnitBar(
+                            unit = selUnit,
+                            onEdit = { vm.editUnit = selUnit },
+                            onClear = { vm.selectedUnitId = null }
+                        )
+                    }
                     SceneCanvas(
                         file = f,
                         camera = vm.camera,
@@ -219,8 +232,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun androidx.compose.foundation.layout.RowScope.TextButtonRow(vm: GameViewModel) {
-        // 顶部按钮：示例 / 打开 / 保存 / 地图 / 测量 / 计算 / 护航队 / 导出 / 回放
-        Button(onClick = { vm.loadSample("冰海巨兽.json") }) { Text("示例") }
+        // 顶部按钮：打开 / 保存 / 地图 / 测量 / 计算 / 护航队 / CWS-NTDS / 导出CSV / 导出 / 回放（契约7：去掉示例）
         Button(onClick = { openFile.launch(arrayOf("application/json", "application/octet-stream", "*/*")) }) {
             Text("打开")
         }
@@ -250,6 +262,30 @@ class MainActivity : ComponentActivity() {
             exportDir.launch(null)
         }) { Text("导出") }
         Button(onClick = { vm.toggleReplay() }) { Text(if (vm.replayTimeline.isNotEmpty()) "退出回放" else "回放") }
+    }
+
+    /** 选中单位操作条（契约7：需求2 编辑入口显性化）：单位名+类型 + 编辑（复用 UnitEditSheet）+ 取消选中 */
+    @Composable
+    private fun SelectedUnitBar(unit: SimUnit, onEdit: () -> Unit, onClear: () -> Unit) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.secondaryContainer
+        ) {
+            Row(
+                Modifier.padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${unit.name}（${unit.unitType}）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onEdit) { Text("编辑") }
+                TextButton(onClick = onClear) { Text("取消选中") }
+            }
+        }
     }
 
     /** 新位置计算器对话框（桌面版 ContainerNewPosition） */

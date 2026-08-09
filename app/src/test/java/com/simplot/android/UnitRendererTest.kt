@@ -25,6 +25,14 @@ class UnitRendererTest {
     }
 
     @Test
+    fun `icon size scales with zoom`() {
+        // 契约7：默认 zoom→16f（与标签同链路）；放大撞上限 40f；缩小撞下限 14f
+        assertEquals(16f, UnitRenderer.iconSizePx(0.0015f), 0.001f)
+        assertEquals(40f, UnitRenderer.iconSizePx(0.05f), 0.001f)
+        assertEquals(14f, UnitRenderer.iconSizePx(0.0005f), 0.001f)
+    }
+
+    @Test
     fun `label scale k clamps between 07 and 25`() {
         // 锚点偏移系数：默认 1.0，clamp [0.7, 2.5]
         assertEquals(0.7f, UnitRenderer.labelScaleK(0.00001f), 0.001f)
