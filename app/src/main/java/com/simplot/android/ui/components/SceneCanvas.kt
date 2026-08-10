@@ -55,8 +55,7 @@ fun SceneCanvas(
     savedMeasures: List<Pair<Pair<Long, Long>, Pair<Long, Long>>> = emptyList(),
     unitDistances: List<UnitDistance>? = null,
     symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS,
-    showSensors: Boolean = true,
-    showWeapons: Boolean = true
+    settings: com.simplot.android.domain.model.PlayerSettings = com.simplot.android.domain.model.PlayerSettings.DEFAULT
 ) {
     val replaying = replayFrame != null
     // 重绘纪元（反馈④）：tick 变化 → LaunchedEffect 快照写；draw 阶段快照读（epoch）→ 必重绘。
@@ -170,18 +169,22 @@ fun SceneCanvas(
         // 陆地/覆盖多边形 + 标注（官方地图）
         mapRenderer.drawPolygons(drawContext.canvas.nativeCanvas, camera, w, h)
 
-        // 网格
-        mapRenderer.drawGrid(drawContext.canvas.nativeCanvas, camera, w, h)
-
-        // 轨迹
-        for (u in file.units) {
-            TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
+        // 网格（R4：ShowGrid 开关）
+        if (settings.showGrid) {
+            mapRenderer.drawGrid(drawContext.canvas.nativeCanvas, camera, w, h)
         }
 
-        // 传感器/武器射程弧（在单位下方绘制）
+        // 轨迹（R4：ShowWaypoints 关时不画轨迹线）
+        if (settings.showWaypoints) {
+            for (u in file.units) {
+                TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
+            }
+        }
+
+        // 传感器/武器射程弧（在单位下方绘制；R4：ShowSensors/ShowWeapons 开关）
         if (!replaying) {
             for (u in file.units) {
-                ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, showSensors, showWeapons)
+                ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, settings.showSensors, settings.showWeapons)
             }
         }
 
@@ -195,7 +198,9 @@ fun SceneCanvas(
                     val frameUnit = u.copy(x = pos.x, y = pos.y)
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy,
                         sizePx = UnitRenderer.iconSizePx(camera.zoom), symbolStyle = symbolStyle)
-                    drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom)
+                    if (settings.showLabels) {
+                        drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom)
+                    }
                 }
             }
         } else {
@@ -204,7 +209,9 @@ fun SceneCanvas(
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy,
                         sizePx = UnitRenderer.iconSizePx(camera.zoom), selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle)
-                    drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom)
+                    if (settings.showLabels) {
+                        drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom)
+                    }
                 }
             }
         }
@@ -267,8 +274,10 @@ fun SceneCanvas(
             drawMeasureLine(nc, camera, w, h, ms, me, saved = false)
         }
 
-        // 坐标比例尺条（右下角）
-        drawScaleBar(drawContext.canvas.nativeCanvas, w, h)
+        // 坐标比例尺条（右下角；R4：ShowScaleBar 开关）
+        if (settings.showScaleBar) {
+            drawScaleBar(drawContext.canvas.nativeCanvas, w, h)
+        }
     }
 }
 

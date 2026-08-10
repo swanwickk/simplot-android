@@ -43,6 +43,7 @@ import com.simplot.android.ui.components.NewPositionDialog
 import com.simplot.android.ui.components.NewUnitDialog
 import com.simplot.android.ui.components.ReplayBar
 import com.simplot.android.ui.components.SceneCanvas
+import com.simplot.android.ui.components.SettingsDialog
 import com.simplot.android.ui.components.TurnControlBar
 import com.simplot.android.ui.components.UnitEditSheet
 import com.simplot.android.ui.components.WaypointEditorDialog
@@ -165,8 +166,7 @@ class MainActivity : ComponentActivity() {
                         savedMeasures = vm.measureLog,
                         unitDistances = unitDist,
                         symbolStyle = vm.symbolStyle,
-                        showSensors = vm.showSensors,
-                        showWeapons = vm.showWeapons,
+                        settings = vm.settings,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
                     if (replaying) {
@@ -262,6 +262,15 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // 玩家显示设置（R4：桌面版 WindowCustomizeDisplay）
+        if (vm.showSettings) {
+            SettingsDialog(
+                settings = vm.settings,
+                onDismiss = { vm.showSettings = false },
+                onSave = { vm.applySettings(it) }
+            )
+        }
+
         // Range 耗尽三选弹窗（桌面版 HasRangeRemaining：Continue/Delete/Stop）
         vm.rangeExhaustedUnit?.let { u ->
             AlertDialog(
@@ -313,10 +322,8 @@ class MainActivity : ComponentActivity() {
             }
         }) { Text(if (vm.measureMode) "退出测量" else "测量") }
         Button(onClick = { vm.toggleSymbolStyle() }) { Text(if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "CWS" else "NTDS") }
-        // P1：传感器/武器弧显示开关（桌面版 Display_Options ShowSensors/ShowWeapons）
-        Button(onClick = { vm.showSensors = !vm.showSensors; vm.showWeapons = vm.showSensors }) {
-            Text(if (vm.showSensors) "弧开" else "弧关")
-        }
+        // R4：玩家显示设置（桌面版 WindowCustomizeDisplay）
+        Button(onClick = { vm.showSettings = true }) { Text("设置") }
         Button(onClick = {
             if (vm.measureLog.isEmpty()) { vm.toast("无测量记录，先测量再导出"); return@Button }
             exportCsvDir.launch(null)

@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repo = ScenarioRepository(application)
+    private val settingsRepo = com.simplot.android.data.repo.SettingsRepository(application)
 
     // ---- 视口/地图（放 ViewModel：跨配置旋转保留视野与已加载地图） ----
     val camera = Camera()
@@ -64,9 +65,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     /** 护航队创建弹窗开关（P2 恢复：桌面版 WindowConvoy） */
     var showConvoy by mutableStateOf(false)
 
-    /** 传感器/武器弧显示开关（对应桌面版 Display_Options ShowSensors/ShowWeapons） */
-    var showSensors by mutableStateOf(true)
-    var showWeapons by mutableStateOf(true)
+    /** 玩家显示设置（R4：桌面版 PlayerSettings，本地持久化） */
+    var settings by mutableStateOf(settingsRepo.load())
+        private set
+    /** 设置弹窗开关 */
+    var showSettings by mutableStateOf(false)
 
     /** 已完成的测量（桌面版 Measurement，用于 CSV 导出 + 画布留存绘制）：起终点世界坐标
      *  SnapshotStateList：draw 阶段迭代读 → 变更即触发 Canvas 失效重绘（反馈①修复核心） */
@@ -104,6 +107,24 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun clearToast() {
         _toasts.value = null
     }
+
+    // ============ 玩家设置（R4） ============
+
+    /** 更新并持久化玩家设置 */
+    fun updateSettings(transform: (com.simplot.android.domain.model.PlayerSettings) -> com.simplot.android.domain.model.PlayerSettings) {
+        val next = transform(settings)
+        settings = next
+        settingsRepo.save(next)
+    }
+
+    /** 直接应用玩家设置（对话框保存） */
+    fun applySettings(new: com.simplot.android.domain.model.PlayerSettings) {
+        settings = new
+        settingsRepo.save(new)
+    }
+
+    /** 开关切换便捷方法 */
+    fun toggleSetting(set: (com.simplot.android.domain.model.PlayerSettings) -> com.simplot.android.domain.model.PlayerSettings) = updateSettings(set)
 
     // ============ 场景加载 ============
 

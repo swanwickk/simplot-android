@@ -5,6 +5,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.3] - 2026-08-10
+
+架构重设计第四轮：玩家设置完整版（显示开关/玩家名持久化）。
+
+### 新增
+- **玩家设置**：新增设置对话框（桌面版 WindowCustomizeDisplay），12 个显示开关（网格/比例尺/标签/速度领导线/传感器/武器/航路点/队形/城市/国家/水域/深度）+ 玩家名
+- **本地持久化**：SettingsRepository（SharedPreferences 存储 PlayerSettings，桌面版 Player_Settings.json 的本地对应物），设置重启不丢失
+- **显示开关接入渲染**：SceneCanvas 网格/比例尺/标签/轨迹/弧绘制均受设置控制，顶部「弧开/弧关」按钮改为「设置」入口
+
+### 测试
+- 新增 PlayerSettingsTest（3 用例：默认值/独立开关/玩家名）——**130 测试全绿**
+
 ## [0.4.2] - 2026-08-10
 
 架构重设计第三轮：运动命令导入 + 自动存档 + Setup 文件。
