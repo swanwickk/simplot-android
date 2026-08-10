@@ -321,7 +321,7 @@ class MainActivity : ComponentActivity() {
                 vm.clearMeasures()  // 修复 B：退出测量模式清除全部测量线
             }
         }) { Text(if (vm.measureMode) "退出测量" else "测量") }
-        Button(onClick = { vm.toggleSymbolStyle() }) { Text(if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "CWS" else "NTDS") }
+        Button(onClick = { vm.toggleSymbolStyle() }) { Text("符号:${if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "NTDS" else if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.CWS) "CWS" else "WW2"}") }
         // R4：玩家显示设置（桌面版 WindowCustomizeDisplay）
         Button(onClick = { vm.showSettings = true }) { Text("设置") }
         Button(onClick = {

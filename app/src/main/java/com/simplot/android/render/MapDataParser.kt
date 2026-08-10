@@ -104,6 +104,48 @@ class MapDataParser {
         pendingBackgroundName = null
     }
 
+    /**
+     * R5：光栅地图 .map/.txt 解析（桌面版 MercatorRaster.LoadMapData）。
+     * 每行 "KEY = ***"：
+     * - MAP = 光栅图片文件名（png/jpg）
+     * - SCALE = 比例尺（km/像素，桌面版 ConvertDouble 本地化解析）
+     * - CITY = 城市名|像素X|像素Y（多个 CITY 行）
+     * - COUNTRY = 国家名|像素X|像素Y
+     * 换算：1 世界单位 = 1/100000 海里 = 1852/100000 米；
+     *       像素距离(米) = px × scale_km_per_px × 1000 → 世界坐标增量 = px × scale × 1000 × 100000 / 1852
+     * @param pendingMapName 输出参数：解析到的 MAP 文件名（调用方据此加载图片）
+     * @return 是否解析到 SCALE（无 SCALE 时城市/国家坐标无法换算）
+     */
+    fun parseRasterMap(text: String, pendingMapName: StringBuilder? = null): Boolean {
+        val map = Regex("(?m)^MAP\\s*=\\s*(.+)\\s*$").find(text)?.groupValues?.get(1)?.trim()
+        val scale = Regex("(?m)^SCALE\\s*=\\s*([\\d.,]+)\\s*$").find(text)?.groupValues?.get(1)
+            ?.replace(",", ".")?.toDoubleOrNull()
+        if (map != null) pendingMapName?.append(map)
+        if (scale == null || scale <= 0.0) return false
+
+        val pxToWorld = scale * 1000.0 * 100000.0 / 1852.0
+
+        Regex("(?m)^CITY\\s*=\\s*(.+)$").findAll(text).forEach { m ->
+            val parts = m.groupValues[1].split("|")
+            if (parts.size >= 3) {
+                val name = parts[0].trim()
+                val px = parts[1].trim().toDoubleOrNull() ?: return@forEach
+                val py = parts[2].trim().toDoubleOrNull() ?: return@forEach
+                cityLabels.add(Triple(name, (px * pxToWorld).toLong(), (py * pxToWorld).toLong()))
+            }
+        }
+        Regex("(?m)^COUNTRY\\s*=\\s*(.+)$").findAll(text).forEach { m ->
+            val parts = m.groupValues[1].split("|")
+            if (parts.size >= 3) {
+                val name = parts[0].trim()
+                val px = parts[1].trim().toDoubleOrNull() ?: return@forEach
+                val py = parts[2].trim().toDoubleOrNull() ?: return@forEach
+                countryLabels.add(Triple(name, (px * pxToWorld).toLong(), (py * pxToWorld).toLong()))
+            }
+        }
+        return true
+    }
+
     private fun parseBoundary(root: JsonObject) {
         root.getAsJsonObject("BoundaryRect")?.let { b ->
             boundaryLeft = b.get("Left")?.asLong ?: 0L

@@ -157,7 +157,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 加载地图文件：.json → MapMaker 配置；图片 → 位图 */
+    /** 加载地图文件：.json → MapMaker 配置；.map/.txt → 光栅地图配置；图片 → 位图 */
     fun loadMapFile(uri: Uri) {
         try {
             val name = queryDisplayName(uri)?.lowercase() ?: ""
@@ -165,6 +165,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 val text = openText(uri) ?: throw IllegalStateException("无法读取地图配置")
                 mapRenderer.parseMapConfigJson(text)
                 toast("地图配置已加载${if (mapRenderer.pendingBackgroundName != null) "：${mapRenderer.pendingBackgroundName}" else ""}")
+            } else if (name.endsWith(".map") || name.endsWith(".txt")) {
+                // R5：光栅地图（桌面版 MercatorRaster）MAP/SCALE/CITY/COUNTRY
+                val text = openText(uri) ?: throw IllegalStateException("无法读取地图配置")
+                val mapName = StringBuilder()
+                val ok = mapRenderer.parser.parseRasterMap(text, mapName)
+                if (mapName.isNotEmpty()) {
+                    // 尝试加载同目录光栅图
+                    val imgUri = findSibling(uri, mapName.toString())
+                    if (imgUri != null) mapRenderer.loadMapImage(getApplication<Application>().contentResolver, imgUri)
+                }
+                toast(if (ok) "光栅地图已加载${if (mapName.isNotEmpty()) "：$mapName" else ""}" else "光栅地图已解析（缺 SCALE，标注未换算）")
             } else {
                 mapRenderer.loadMapImage(getApplication<Application>().contentResolver, uri)
                 toast("地图图片已加载")
@@ -510,12 +521,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 切换符号风格 */
+    /** 切换符号风格：NTDS → CWS → WW2 → NTDS（R5：三态循环） */
     fun toggleSymbolStyle() {
-        symbolStyle = if (symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS)
-            com.simplot.android.render.UnitRenderer.SymbolStyle.CWS
-        else
-            com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
+        symbolStyle = when (symbolStyle) {
+            com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS -> com.simplot.android.render.UnitRenderer.SymbolStyle.CWS
+            com.simplot.android.render.UnitRenderer.SymbolStyle.CWS -> com.simplot.android.render.UnitRenderer.SymbolStyle.WW2
+            com.simplot.android.render.UnitRenderer.SymbolStyle.WW2 -> com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
+        }
         toast("符号风格：${symbolStyle}")
     }
 

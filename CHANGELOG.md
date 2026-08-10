@@ -5,6 +5,17 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.4] - 2026-08-10
+
+架构重设计第五轮：WW2 符号 + 光栅地图（.map/.txt）解析。
+
+### 新增
+- **WW2 符号系统**：第三套符号风格（桌面版 WW2Symbols），菱形框架 + 类型字母 + 阵营色；顶部「符号」按钮三态循环 NTDS→CWS→WW2
+- **光栅地图解析**：.map/.txt 格式（桌面版 MercatorRaster）：MAP=图片文件名 / SCALE=比例尺 / CITY、COUNTRY=名称|X|Y，像素坐标按比例尺换算为世界坐标，自动加载同目录光栅图
+
+### 测试
+- 新增 RasterMapParseTest（4 用例：MAP/SCALE 解析、城市/国家标注换算、缺 SCALE 回退、空文本安全）、UnitRendererTest 补三态断言——**135 测试全绿**
+
 ## [0.4.3] - 2026-08-10
 
 架构重设计第四轮：玩家设置完整版（显示开关/玩家名持久化）。

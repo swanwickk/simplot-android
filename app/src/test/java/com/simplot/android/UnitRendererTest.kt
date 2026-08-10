@@ -41,4 +41,14 @@ class UnitRendererTest {
         assertEquals(2.5f, UnitRenderer.labelScaleK(0.05f), 0.001f)
         assertEquals(2.5f, UnitRenderer.labelScaleK(1f), 0.001f)
     }
+
+    @Test
+    fun `symbol style has three states`() {
+        // R5：NTDS / CWS / WW2 三态（桌面版 SymbolGenerator 三种符号系统）
+        val styles = UnitRenderer.SymbolStyle.values()
+        assertEquals(3, styles.size)
+        assertEquals(UnitRenderer.SymbolStyle.NTDS, styles[0])
+        assertEquals(UnitRenderer.SymbolStyle.CWS, styles[1])
+        assertEquals(UnitRenderer.SymbolStyle.WW2, styles[2])
+    }
 }

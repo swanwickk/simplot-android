@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object UnitRenderer {
 
-    enum class SymbolStyle { NTDS, CWS }
+    enum class SymbolStyle { NTDS, CWS, WW2 }
 
     private val sideColors = mapOf(
         // 与 Color.rgb(r,g,b) 逐字节一致（0xFF<<24 | r<<16 | g<<8 | b），
@@ -182,9 +182,37 @@ object UnitRenderer {
 
         val r = sizePx / 2
         val cws = symbolStyle == SymbolStyle.CWS
-        // 契约7：CWS 先尝试类型独特精灵图标（BB/CC/DD/FF/PC/LA/LC/LS/AR/AS + 别名 CL/CA）；
-        // 未命中映射或加载失败 → 矢量兜底（原 CWS 填充符号），保证任何类型都有可见符号
-        if (!(cws && drawCwsIcon(canvas, u, sx, sy, sizePx))) {
+        val ww2 = symbolStyle == SymbolStyle.WW2
+        // R5：WW2 符号（桌面版 WW2Symbols）：菱形框架 + 类型字母，阵营色
+        if (ww2) {
+            val frame = Path().apply {
+                moveTo(sx, sy - r)
+                lineTo(sx + r * 0.9f, sy)
+                lineTo(sx, sy + r)
+                lineTo(sx - r * 0.9f, sy)
+                close()
+            }
+            canvas.drawPath(frame, fill)
+            canvas.drawPath(frame, stroke)
+            // 类型字母（类简码首字母）
+            val letter = u.unitClass.firstOrNull()?.uppercaseChar() ?: u.unitType.firstOrNull()?.uppercaseChar() ?: '?'
+            val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                textSize = sizePx * 0.7f
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            canvas.drawText(letter.toString(), sx, sy + sizePx * 0.25f, tp)
+            // 沉没标记
+            if (u.showSunk) {
+                val sunk = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    this.color = Color.BLACK
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2f
+                }
+                canvas.drawLine(sx - r, sy - r, sx + r, sy + r, sunk)
+                canvas.drawLine(sx + r, sy - r, sx - r, sy + r, sunk)
+            }
+        } else if (!(cws && drawCwsIcon(canvas, u, sx, sy, sizePx))) {
             when {
                 u.isAircraft() -> {
                     // 飞机：三角翼符号
