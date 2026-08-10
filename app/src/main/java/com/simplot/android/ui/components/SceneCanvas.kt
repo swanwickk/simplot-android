@@ -55,7 +55,8 @@ fun SceneCanvas(
     savedMeasures: List<Pair<Pair<Long, Long>, Pair<Long, Long>>> = emptyList(),
     unitDistances: List<UnitDistance>? = null,
     symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS,
-    settings: com.simplot.android.domain.model.PlayerSettings = com.simplot.android.domain.model.PlayerSettings.DEFAULT
+    settings: com.simplot.android.domain.model.PlayerSettings = com.simplot.android.domain.model.PlayerSettings.DEFAULT,
+    miscAnnotations: List<com.simplot.android.domain.model.MiscAnnotation> = emptyList()
 ) {
     val replaying = replayFrame != null
     // 重绘纪元（反馈④）：tick 变化 → LaunchedEffect 快照写；draw 阶段快照读（epoch）→ 必重绘。
@@ -160,8 +161,8 @@ fun SceneCanvas(
         // draw 阶段快照读：epoch 变化 → Canvas 失效重绘（④ 修复核心）
         @Suppress("UNUSED_VARIABLE") val epoch = drawEpoch
 
-        // 背景
-        drawRect(androidx.compose.ui.graphics.Color(0xFFF0F2F5))
+        // 背景（R7：颜色可配置，桌面版 Colors.BackgroundColor）
+        drawRect(androidx.compose.ui.graphics.Color(settings.backgroundColor))
 
         // 地图贴图（如有）
         mapRenderer.drawBitmap(drawContext.canvas.nativeCanvas, camera, w, h)
@@ -185,7 +186,16 @@ fun SceneCanvas(
         if (!replaying) {
             for (u in file.units) {
                 ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, settings.showSensors, settings.showWeapons)
+                // R7：被动方位线（声呐/ES）
+                com.simplot.android.render.BearingRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
             }
+        }
+
+        // Misc 标注（R7：桌面版 MiscBox/Oval/Line/Polygon/Label，Overlay 层）
+        if (miscAnnotations.isNotEmpty()) {
+            com.simplot.android.render.MiscAnnotationRenderer.draw(
+                drawContext.canvas.nativeCanvas, miscAnnotations, camera, w, h
+            )
         }
 
         // 单位：回放模式用帧位置；正常模式用实时位置

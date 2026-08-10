@@ -50,6 +50,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var currentUri by mutableStateOf<Uri?>(null)
         private set
 
+    /** Misc 标注（R7：从 Overlays 解析，桌面版 MiscBox/Oval/Line/Polygon/Label） */
+    var miscAnnotations by mutableStateOf<List<com.simplot.android.domain.model.MiscAnnotation>>(emptyList())
+        private set
+
     // 以下为纯 UI 交互状态（点选/编辑/测量/计算弹窗），UI 直接读写
     var selectedUnitId by mutableStateOf<String?>(null)
     var editUnit by mutableStateOf<SimUnit?>(null)
@@ -147,6 +151,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun applyLoaded(loaded: ScenarioFile) {
         file = loaded
         selectedUnitId = null
+        // R7：解析 Overlays → Misc 标注
+        miscAnnotations = com.simplot.android.domain.engine.MiscAnnotationParser.parse(loaded.overlays)
         revision++
         // 视野自适应由 SceneCanvas.onSizeChanged 按真实画布尺寸执行
         toast("已加载场景：${loaded.scenario.scenarioName}（${loaded.units.size} 单位）")

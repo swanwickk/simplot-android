@@ -53,6 +53,7 @@ data class Unit(
     @SerializedName("Ascend") var ascend: Int? = null,
     @SerializedName("DescRate") var descRate: Int? = null,
     @SerializedName("PerceptionArray") var perceptionArray: MutableList<Perception>? = null,
+    @SerializedName("PassiveBearingArray") var passiveBearingArray: MutableList<PassiveBearing>? = null,   // 被动方位（声呐/ES，桌面版 PassiveBearings）
 
     /** 瞬态标记：本回合新加入的单位不移动（不落盘，Gson 忽略） */
     @Transient var isNewThisTurn: Boolean = false,
@@ -155,4 +156,22 @@ data class Perception(
     @SerializedName("ShowCourseSpeed") var showCourseSpeed: Boolean = false,
     @SerializedName("ShowDepth") var showDepth: Boolean = false,
     @SerializedName("ShowName") var showName: Boolean = false
+)
+
+/**
+ * 被动方位（R7，桌面版 PassiveBearings.CBearing）：
+ * 声呐/ES 探测到的目标方位线，{Type, Bearing, Emitter, ES, Label, PositionTimeStart/End, ShowAsSide}。
+ * BearingToJson 含 Emitter/ES 字段（反汇编确认）。
+ */
+data class PassiveBearing(
+    @SerializedName("Type") var type: String = "ES",
+    @SerializedName("BeamLength") var beamLength: Double = 0.0,
+    @SerializedName("BeamWidth") var beamWidth: Double = 0.0,
+    @SerializedName("Bearing") var bearing: Double = 0.0,               // 方位角（度，0=北）
+    @SerializedName("Emitter") var emitter: String = "",                // 目标单位 IdNum
+    @SerializedName("ES") var es: String = "",
+    @SerializedName("Label") var label: String = "",
+    @SerializedName("PositionTimeStart") var positionTimeStart: String = "",
+    @SerializedName("PositionTimeEnd") var positionTimeEnd: String = "",
+    @SerializedName("ShowAsSide") var showAsSide: String = "Unknown"
 )

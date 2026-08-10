@@ -1,10 +1,16 @@
 package com.simplot.android.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -21,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.simplot.android.domain.model.PlayerSettings
 
@@ -62,6 +69,12 @@ fun SettingsDialog(
                 SettingsCheckRow("显示国家", s.showCountries) { s = s.copy(showCountries = !s.showCountries) }
                 SettingsCheckRow("显示水域", s.showWaters) { s = s.copy(showWaters = !s.showWaters) }
                 SettingsCheckRow("显示深度区", s.showDepths) { s = s.copy(showDepths = !s.showDepths) }
+                HorizontalDivider()
+                Text("颜色（R7：桌面版 Colors）", style = MaterialTheme.typography.labelMedium)
+                ColorRow("背景", s.backgroundColor, listOf(0xFFF0F2F5, 0xFF1A1A2E, 0xFF102030, 0xFFE8E0D0)) { c -> s = s.copy(backgroundColor = c) }
+                ColorRow("网格", s.gridColor, listOf(0x883C789C, 0x44444444, 0x88FFFFFF, 0x88555555)) { c -> s = s.copy(gridColor = c) }
+                ColorRow("蓝方", s.blueForColor, listOf(0xFF005AC8, 0xFF1E5AA8, 0xFF2040A0, 0xFF006080)) { c -> s = s.copy(blueForColor = c) }
+                ColorRow("红方", s.redForColor, listOf(0xFFC81E1E, 0xFFA02020, 0xFFB03030, 0xFF801010)) { c -> s = s.copy(redForColor = c) }
             }
         },
         confirmButton = {
@@ -79,5 +92,23 @@ private fun SettingsCheckRow(label: String, checked: Boolean, onChange: () -> ko
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = checked, onCheckedChange = { onChange() })
         Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** 颜色选择行：预设色块（当前色高亮边框） */
+@Composable
+private fun ColorRow(label: String, current: Long, presets: List<Long>, onSelect: (Long) -> kotlin.Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        presets.forEach { c ->
+            Box(
+                Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(24.dp)
+                    .background(Color(c), CircleShape)
+                    .clickable { onSelect(c) }
+                    .then(if (c == current) Modifier.padding(2.dp) else Modifier)
+            )
+        }
     }
 }

@@ -168,6 +168,7 @@ class MainActivity : ComponentActivity() {
                         unitDistances = unitDist,
                         symbolStyle = vm.symbolStyle,
                         settings = vm.settings,
+                        miscAnnotations = vm.miscAnnotations,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
                     if (replaying) {

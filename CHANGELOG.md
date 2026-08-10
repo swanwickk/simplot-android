@@ -5,6 +5,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.6] - 2026-08-10
+
+架构重设计第七轮：Misc 标注对象 + 被动方位 + 颜色配置。
+
+### 新增
+- **Misc 标注对象**：Overlays 解析（桌面版 MiscLabel/Box/Oval/Line/Polygon CreateFromJson），画布 Overlay 层绘制（MiscAnnotationParser 纯 Kotlin + MiscAnnotationRenderer）
+- **被动方位**：PassiveBearing 模型（桌面版 PassiveBearings：Type/Bearing/Emitter/ES/Label）+ 方位线绘制（BearingRenderer）
+- **颜色配置**：PlayerSettings 增 6 个颜色键（背景/网格/蓝方/红方/陆地/海洋），设置对话框预设色块选择，画布背景色可配置
+
+### 测试
+- 新增 MiscAnnotationAndBearingTest（4 用例：标注解析/空安全/被动方位 Gson 往返/null 安全）——**144 测试全绿**
+
 ## [0.4.5] - 2026-08-10
 
 架构重设计第六轮：编队引擎（准备/撤销）+ 复制分派增强 + 轨迹点样式。

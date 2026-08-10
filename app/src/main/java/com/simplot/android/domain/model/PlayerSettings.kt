@@ -26,7 +26,14 @@ data class PlayerSettings(
     val showWaters: Boolean = true,
     val showDepths: Boolean = true,
     val showDepthKey: Boolean = true,
-    val showSonar: Boolean = true
+    val showSonar: Boolean = true,
+    // R7：显示颜色（桌面版 Colors.SaveColors/LoadColors 键）
+    val backgroundColor: Long = 0xFFF0F2F5,       // 背景
+    val gridColor: Long = 0x883C789C,             // 网格
+    val blueForColor: Long = 0xFF005AC8,          // 蓝方
+    val redForColor: Long = 0xFFC81E1E,           // 红方
+    val mapLandColor: Long = 0x7896AA82,          // 陆地
+    val mapOceanColor: Long = 0x40C8DCE8          // 海洋
 ) {
     companion object {
         val DEFAULT = PlayerSettings()
