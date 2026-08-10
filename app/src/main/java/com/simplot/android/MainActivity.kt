@@ -38,6 +38,9 @@ import com.simplot.android.data.util.unitDistances
 import com.simplot.android.data.model.Unit as SimUnit
 import com.simplot.android.ui.GameViewModel
 import com.simplot.android.ui.components.ArcEditorDialog
+import com.simplot.android.ui.components.ConvoyDialog
+import com.simplot.android.ui.components.NewPositionDialog
+import com.simplot.android.ui.components.NewUnitDialog
 import com.simplot.android.ui.components.ReplayBar
 import com.simplot.android.ui.components.SceneCanvas
 import com.simplot.android.ui.components.TurnControlBar
@@ -223,6 +226,34 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // 新建单位（P1：桌面版各类型 NewUnit 窗口）
+        if (vm.showNewUnit) {
+            NewUnitDialog(
+                onDismiss = { vm.showNewUnit = false },
+                onCreate = { domain, name, unitType, unitClass, side, x, y ->
+                    vm.createNewUnit(domain, name, unitType, unitClass, side, x, y)
+                    vm.showNewUnit = false
+                }
+            )
+        }
+
+        // 新位置计算器（P2 恢复：桌面版 ContainerNewPosition）
+        if (vm.showNewPosition) {
+            NewPositionDialog(
+                units = vm.file?.units ?: emptyList(),
+                onDismiss = { vm.showNewPosition = false },
+                onCalc = { refId, bearing, dist -> vm.calcNewPosition(refId, bearing, dist); vm.showNewPosition = false }
+            )
+        }
+
+        // 护航队创建（P2 恢复：桌面版 WindowConvoy）
+        if (vm.showConvoy) {
+            ConvoyDialog(
+                onDismiss = { vm.showConvoy = false },
+                onCreate = { name, count, dist -> vm.createConvoy(name, count, dist); vm.showConvoy = false }
+            )
+        }
+
         // Range 耗尽三选弹窗（桌面版 HasRangeRemaining：Continue/Delete/Stop）
         vm.rangeExhaustedUnit?.let { u ->
             AlertDialog(
@@ -257,6 +288,13 @@ class MainActivity : ComponentActivity() {
             saveFile.launch("$defaultName.json")
         }) { Text("保存") }
         Button(onClick = { pickMap.launch(arrayOf("image/*")) }) { Text("地图") }
+        // P2 恢复：新建单位 / 新位置计算器 / 护航队
+        Button(onClick = { if (vm.file != null) vm.showNewUnit = true else vm.toast("请先打开一个场景") }) { Text("新单位") }
+        Button(onClick = {
+            if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可作参考"); return@Button }
+            vm.showNewPosition = true
+        }) { Text("新位置") }
+        Button(onClick = { if (vm.file != null) vm.showConvoy = true else vm.toast("请先打开一个场景") }) { Text("护航队") }
         Button(onClick = {
             if (vm.file == null) return@Button
             if (vm.replayTimeline.isNotEmpty()) { vm.toast("回放中不可测量"); return@Button }

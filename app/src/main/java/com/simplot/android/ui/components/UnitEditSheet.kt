@@ -220,12 +220,12 @@ fun formatCourseSpeed(v: Double): String =
     if (v % 1.0 == 0.0) v.toLong().toString() else v.toString()
 
 /** 「显示为类型」选项：真实类型（留空）→ 空串；其余值与 unitClass 简码一致（契约8）
- *  反馈⑨：补 CV 系列（原版 CWS 素材有航母，col12 已映射；类型下拉同样要有航母可选）
- *  反馈⑩：CG 修正（原误写 CC；CWS 行1 col3 为斜体字母 CG 导弹巡洋舰） */
+ *  与 UnitRenderer.CWS_CLASS_CELLS 映射键集合对齐（含 CV 系列 / CG / CL / CA 别名） */
 private val SHOW_TYPE_OPTIONS: List<Pair<String, String>> = listOf(
     "真实类型（留空）" to "",
     "BB" to "BB", "CG" to "CG", "CV" to "CV", "DD" to "DD", "FF" to "FF", "PC" to "PC",
-    "LA" to "LA", "LC" to "LC", "LS" to "LS", "AR" to "AR", "AS" to "AS"
+    "LA" to "LA", "LC" to "LC", "LS" to "LS", "AR" to "AR", "AS" to "AS",
+    "CL" to "CL", "CA" to "CA", "CC" to "CC"
 )
 
 /** 「显示为阵营」选项：真实阵营（留空）→ 空串 */

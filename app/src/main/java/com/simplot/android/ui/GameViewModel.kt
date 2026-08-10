@@ -57,6 +57,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var editArcUnit by mutableStateOf<SimUnit?>(null)
     /** 航路点编辑目标单位（P1：WindowWaypoints 对应） */
     var editWaypointsUnit by mutableStateOf<SimUnit?>(null)
+    /** 新建单位弹窗开关（P1：桌面版各类型新建窗口入口） */
+    var showNewUnit by mutableStateOf(false)
+    /** 新位置计算器开关（P2 恢复：桌面版 ContainerNewPosition） */
+    var showNewPosition by mutableStateOf(false)
+    /** 护航队创建弹窗开关（P2 恢复：桌面版 WindowConvoy） */
+    var showConvoy by mutableStateOf(false)
 
     /** 传感器/武器弧显示开关（对应桌面版 Display_Options ShowSensors/ShowWeapons） */
     var showSensors by mutableStateOf(true)
@@ -232,19 +238,20 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun doTurn() {
         val f = file ?: return
         // 门禁（反馈②③）：非 DO_BEFORE/DO_NEXT 状态禁止 Do，不产生任何副作用
-        if (!TurnState.canDo(TurnState.detect(f))) { toast("当前状态不可 Do（请先 Undo 或 Next）"); return }
-        MovementEngine.advance(f, f.time.currentTurnInterval)
+        val result = com.simplot.android.domain.usecase.AdvanceTurnUseCase.execute(f, f.time.currentTurnInterval)
+            ?: run { toast("当前状态不可 Do（请先 Undo 或 Next）"); return }
         revision++
         // Range 耗尽检测：桌面版三选弹窗（Continue/Delete/Stop）；已选"继续移动"不再提示
-        f.units.firstOrNull { it.range == 0 && !it.showSunk && !it.ignoreRange }?.let { rangeExhaustedUnit = it }
-        toast("Do：已移动至 ${f.time.currentPositionTime}")
+        result.rangeExhausted.firstOrNull()?.let { id -> rangeExhaustedUnit = f.units.firstOrNull { it.idNum == id } }
+        toast("Do：已移动至 ${result.newPositionTime}")
     }
 
     fun undo() {
         val f = file ?: return
         // 门禁（反馈②③）：仅 Do 后未确认可 Undo（拦截 DO_BEFORE 下回退时间的危险路径）
-        if (!TurnState.canUndo(TurnState.detect(f))) { toast("当前状态不可 Undo"); return }
-        TurnState.undo(f, f.time.currentTurnInterval)
+        if (!com.simplot.android.domain.usecase.AdvanceTurnUseCase.undo(f, f.time.currentTurnInterval)) {
+            toast("当前状态不可 Undo"); return
+        }
         revision++
         toast("Undo")
     }
@@ -252,8 +259,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun next() {
         val f = file ?: return
         // 门禁（反馈②③）：仅 Do 后未确认可 Next
-        if (!TurnState.canNext(TurnState.detect(f))) { toast("请先 Do 再 Next 确认"); return }
-        TurnState.confirmNext(f, f.time.currentTurnInterval)
+        if (!com.simplot.android.domain.usecase.AdvanceTurnUseCase.next(f, f.time.currentTurnInterval)) {
+            toast("请先 Do 再 Next 确认"); return
+        }
         revision++
         toast("Next：回合已确认")
     }
@@ -325,13 +333,85 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 新 IdNum（桌面版：Domain 首字母 + 递增序号） */
-    private fun nextId(f: ScenarioFile): String {
-        val prefix = "S"
+    private fun nextId(f: ScenarioFile, prefix: String = "S"): String {
         var max = 0
         f.units.forEach { u ->
             u.idNum.removePrefix(prefix).toIntOrNull()?.let { if (it > max) max = it }
         }
         return prefix + (max + 1).toString().padStart(3, '0')
+    }
+
+    /**
+     * 新建单位（P1：桌面版各类型 NewUnit 窗口）。按 Domain 分派前缀与类型，插入到场景中。
+     */
+    fun createNewUnit(
+        domain: com.simplot.android.domain.registry.UnitTypeRegistry.Domain,
+        name: String, unitType: String, unitClass: String,
+        side: String, x: Long, y: Long
+    ) {
+        file?.let { f ->
+            val prefix = when (domain) {
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SURFACE -> "S"
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR -> "A"
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE -> "U"
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.VEHICLE -> "V"
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.INSTALLATION -> "I"
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.LAND_FORMATION -> "L"
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT -> "R"
+                com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SONOBUOY -> "B"
+                else -> "S"
+            }
+            val newUnit = SimUnit(
+                idNum = nextId(f, prefix),
+                side = side,
+                name = name,
+                unitType = unitType,
+                unitClass = unitClass,
+                trackNumber = (f.units.maxOfOrNull { it.trackNumber } ?: 2400) + 1,
+                x = x, y = y,
+                isNewThisTurn = true
+            )
+            f.units.add(newUnit)
+            selectedUnitId = newUnit.idNum
+            revision++
+            toast("已新建：${newUnit.name}")
+        }
+    }
+
+    /**
+     * 创建护航队（P2 恢复，桌面版 Game.Convoy.CreateConvoy）：
+     * COMMODORE 居中，Merchant 环绕，dist=2000 码，角度均匀分布。
+     * 逻辑在 [com.simplot.android.domain.engine.ConvoyEngine]（纯 Kotlin 可单测）。
+     */
+    fun createConvoy(commodoreName: String = "COMMODORE", escortCount: Int = 6, distYards: Int = 2000) {
+        file?.let { f ->
+            val units = com.simplot.android.domain.engine.ConvoyEngine.build(
+                f,
+                com.simplot.android.domain.engine.ConvoyEngine.ConvoySpec(
+                    commodoreName = commodoreName,
+                    escortCount = escortCount,
+                    distYards = distYards
+                ),
+                nextId = { prefix -> nextId(f, prefix) }
+            )
+            f.units.addAll(units)
+            revision++
+            toast("已创建护航队：1 指挥舰 + $escortCount 商船")
+        }
+    }
+
+    /**
+     * 新位置计算（P2 恢复，桌面版 ContainerNewPosition.PushCalcPosition）：
+     * 参考单位 + 方位角 + 距离 → 新坐标，toast 显示。
+     */
+    fun calcNewPosition(refId: String, bearingDeg: Double, distNm: Double) {
+        val f = file ?: return
+        val ref = f.units.firstOrNull { it.idNum == refId } ?: run {
+            toast("请选择参考单位")
+            return
+        }
+        val (nx, ny) = com.simplot.android.domain.engine.CalcEngine.newPosition(ref.x, ref.y, bearingDeg, distNm)
+        toast("${ref.name}：方位 $bearingDeg° 距离 $distNm nmi\nX=$nx Y=$ny")
     }
 
     /** 测量完成回调：记录测量线（不自动退出测量模式，可连续画多条对照；退出由按钮/选中单位触发） */

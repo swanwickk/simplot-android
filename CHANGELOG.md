@@ -5,6 +5,19 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.1] - 2026-08-10
+
+架构重设计第二轮：功能补齐（新单位/新位置/护航队恢复）+ UseCase 层。
+
+### 新增
+- **新建单位**：新建单位对话框（类型大类 Domain 下拉 + 子类型菜单，用 UnitTypeRegistry 桌面版全量子类型表），按 Domain 分派 IdNum 前缀（S/A/U/V/I/L/R/B）
+- **新位置计算器（恢复）**：参考单位 + 方位角 + 距离 → 新坐标（CalcEngine.newPosition）
+- **护航队创建（恢复）**：指挥舰 + 环绕商船（数量/距离可调），逻辑抽为 ConvoyEngine 纯 Kotlin 可单测
+- **UseCase 层**：新增 domain/usecase/AdvanceTurnUseCase（Do/Undo/Next 门禁 + Range 耗尽/最终航路点检测），GameViewModel 回合操作改为调用 UseCase（瘦身）
+
+### 测试
+- 新增 AdvanceTurnUseCaseTest（5 用例：Do 推进/Undo 恢复/门禁拦截/Range 耗尽/最终航路点）、ConvoyEngineTest（3 用例：1+6 生成/自定义参数/航迹号递增）——**124 测试全绿**
+
 ## [0.4.0] - 2026-08-10
 
 架构重设计第一轮：前后端分层落地（domain 层）+ 感知双视角 + 弧/航路点编辑。
