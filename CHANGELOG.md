@@ -5,6 +5,16 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.9] - 2026-08-10
+
+旧存档读取兼容修复（真机反馈：读取旧 Red 文件抛 IllegalStateException）。
+
+### 修复
+- **旧存档空结构容错**：桌面版旧存档把空数组写为 `{}`（空对象）、空 Map 写为 `[]`（空数组）。此前仅 PastWaypointArray 有兼容，Objects/SensorArray/PerceptionArray/Turns 等字段遇 `{}`、Formations/Overlays 遇 `[]` 会抛 `Expected BEGIN_ARRAY/BEGIN_OBJECT but was ...`。新增 Gson 通用容错 TypeAdapterFactory：Collection 目标遇对象→空列表，Map 目标遇数组→空 Map
+
+### 测试
+- 新增 LegacyRedFileCompatTest（4 用例：旧 Red JSON 容错解析 / SpScn 字节链路 / 正常数组不受影响 / 往返兼容）——**148 测试全绿**
+
 ## [0.4.8] - 2026-08-10
 
 架构重设计第九轮：参考点/声呐浮标编辑适配 + 全部计划项收尾。
