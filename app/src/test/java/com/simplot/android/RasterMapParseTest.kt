@@ -1,6 +1,7 @@
 package com.simplot.android
 
 import com.simplot.android.render.MapDataParser
+import kotlin.math.roundToLong
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,8 +36,8 @@ class RasterMapParseTest {
         assertEquals(2, p.cityLabels.size)
         assertEquals("Honolulu", p.cityLabels[0].first)
         assertEquals("USA", p.countryLabels[0].first)
-        // 坐标按 SCALE 换算：px × 3.071km/px × 1000 × 100000 / 1852
-        val expected = (100 * 3.071 * 1000.0 * 100000.0 / 1852.0).toLong()
+        // 坐标按 SCALE 换算（R6/D4：桌面 SimPlotX ← 像素 ÷ Scale，再 ×10 转存档坐标，四舍五入）
+        val expected = (100 / 3.071 * 10).roundToLong()
         assertEquals(expected, p.cityLabels[0].second)
     }
 

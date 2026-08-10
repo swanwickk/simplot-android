@@ -103,8 +103,11 @@ class ScenarioRepository(private val context: Context) {
     }
 
     companion object {
-        /** 默认玩家显示设置（对应桌面版 player_settings.json 常见开关） */
-        const val DEFAULT_PLAYER_SETTINGS: String = """{"ShowTracks":true,"ShowTrackTimes":false,"ShowTurnTrackTimes":false,"ShowUnits":true,"ShowTextTags":true,"ShowSensors":false,"ShowWeapons":false,"ShowGrid":true,"ShowScale":true,"ShowArcs":false,"ShowBearings":false}"""
+        /**
+         * 默认玩家显示设置（D6 决策：桌面版 Player_Settings.json schema）。
+         * 桌面版 SaveDisplayOptions 15 键，全部保留；含 File/PlayerName/Units 包装。
+         */
+        const val DEFAULT_PLAYER_SETTINGS: String = """{"Player_Settings":{"File":"","Display_Options":{"ShowCities":true,"ShowCountries":true,"ShowWaters":true,"ShowWaypoints":true,"ShowDepths":true,"ShowDepthKey":true,"ShowEs":true,"ShowGrid":true,"ShowScaleBar":true,"ShowWeapons":true,"ShowSensors":true,"ShowSonar":true,"ShowLabels":true,"ShowSpeedLeaders":true,"ShowFormations":true},"PlayerName":"Player","Units":[]}}"""
     }
 
     /**
@@ -200,13 +203,15 @@ class ScenarioRepository(private val context: Context) {
     }
 
     /**
-     * 自动存档（桌面版 SaveAuto）："Referee Turn N_日期_时间.json" 写到场景同目录。
+     * 自动存档（桌面版 SaveAuto）："Referee Turn N_<回合时间>.json" 写到场景同目录。
+     * P2-3 修复：时间源 = 当前回合时间（currentTurnTime，桌面版 SaveAuto 反汇编确认），
+     * 冒号替换为下划线（桌面 String._ReplaceAll(':', '_')）。
      * 目标目录由 target 文件 URI 推导（复用 parentTreeUri）。
      */
     fun saveAuto(targetFileUri: Uri, data: ScenarioFile, turnNumber: Int): Boolean {
         val parent = parentTreeUri(targetFileUri) ?: return false
-        val stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
-        val name = "Referee Turn ${turnNumber}_$stamp.json"
+        val turnTime = data.time.currentTurnTime.replace(':', '_')
+        val name = "Referee Turn ${turnNumber}_$turnTime.json"
         return try {
             saveJson(childOrCreate(parent, name), data.copy(file = "Referee"))
             true

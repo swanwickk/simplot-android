@@ -141,7 +141,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val loaded = scenarioUseCases.load(uri).getOrElse { throw it }
             applyLoaded(loaded)
-            loaded.scenario.mapFileName.takeIf { it.isNotBlank() }?.let { mapName ->
+            loaded.scenario.mapFileName?.takeIf { it.isNotBlank() }?.let { mapName ->
                 autoLoadMap(mapName, uri)
             }
         } catch (e: Exception) {
@@ -260,12 +260,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 导出运动命令（桌面版 WindowExportOrders） */
+    /** 导出运动命令（桌面版 WindowExportOrders）；玩家名用设置值（R-P3 修复） */
     fun exportMovementOrders(directory: Uri) {
         val f = file ?: return
         try {
-            repo.exportMovementOrders(directory, "Player", f.units)
-            toast("已导出运动命令：Movement - Player.json")
+            val playerName = settings.playerName.ifBlank { "Player" }
+            repo.exportMovementOrders(directory, playerName, f.units)
+            toast("已导出运动命令：Movement - $playerName.json")
         } catch (e: Exception) {
             toast("导出失败：${e.message}")
         }
@@ -380,17 +381,30 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** 标为沉没（桌面版 DeleteUnit 三选 "Show as Sunk"：单位保留但标沉没） */
+    fun showAsSunk(unit: SimUnit) {
+        file?.let { f ->
+            val t = f.units.firstOrNull { it.idNum == unit.idNum }
+            if (t != null) {
+                t.showSunk = true
+                t.speed = 0
+                t.futureWaypointArray.clear()
+            }
+            revision++
+            toast("${unit.name} 已标记为沉没")
+        }
+    }
+
     /**
      * 单位复制（桌面版 CopyUnit）：深拷贝 + 新 IdNum/TrackNumber + 附近偏移。
-     * 陆上单位（Installation/LandFormation）不复制传感器/武器（桌面版 CopyLandUnit 无 CopySensors）。
-     * R6：Domain 判定用 UnitTypeRegistry（替代 idNum 前缀硬编码）。
+     * P0 修复：同步维护 scenario.lastId / currentTrackNumber（桌面 GetIdNumber/GetTrackNumber 依赖存档计数器）。
      */
     fun duplicateUnit(unit: SimUnit) {
         file?.let { f ->
             val gson = com.simplot.android.data.codec.JsonUtil.gson
             val copy = gson.fromJson(gson.toJson(unit), SimUnit::class.java)
             copy.idNum = nextId(f, domainPrefix(unit))
-            copy.trackNumber = (f.units.maxOfOrNull { it.trackNumber } ?: 2400) + 1
+            copy.trackNumber = allocateTrackNumber(f, unit.side)
             copy.name = unit.name + " (副本)"
             copy.isNewThisTurn = true
             val (dx, dy) = CoordUtil.offsetNm(135.0, 2.0)
@@ -423,13 +437,35 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         else -> "S"
     }
 
-    /** 新 IdNum（桌面版：Domain 首字母 + 递增序号） */
+    /**
+     * 新 IdNum（桌面版 GetIdNumber：全局自增，LastId 存于场景 JSON）。
+     * P0 修复：max(现有同类最大, scenario.lastId) + 1，并写回 lastId（删除单位后不回退）。
+     */
     private fun nextId(f: ScenarioFile, prefix: String = "S"): String {
         var max = 0
         f.units.forEach { u ->
             u.idNum.removePrefix(prefix).toIntOrNull()?.let { if (it > max) max = it }
         }
-        return prefix + (max + 1).toString().padStart(3, '0')
+        val next = maxOf(max, f.scenario.lastId) + 1
+        f.scenario.lastId = next
+        return prefix + next.toString().padStart(3, '0')
+    }
+
+    /**
+     * 分配 TrackNumber（桌面版 GetTrackNumber/GetPlayerTrackNumber：蓝/红各一套计数器）。
+     * P0 修复：红方用 currentPlayerTrackNumber，其余用 currentTrackNumber；
+     * 取 max(计数器, 现有最大) + 1 并写回（删除后不回退）。
+     */
+    private fun allocateTrackNumber(f: ScenarioFile, side: String): Int {
+        val maxTn = f.units.maxOfOrNull { it.trackNumber } ?: 2400
+        if (side == "Red") {
+            val next = maxOf(f.scenario.currentPlayerTrackNumber, maxTn) + 1
+            f.scenario.currentPlayerTrackNumber = next
+            return next
+        }
+        val next = maxOf(f.scenario.currentTrackNumber, maxTn) + 1
+        f.scenario.currentTrackNumber = next
+        return next
     }
 
     /**
@@ -458,7 +494,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 name = name,
                 unitType = unitType,
                 unitClass = unitClass,
-                trackNumber = (f.units.maxOfOrNull { it.trackNumber } ?: 2400) + 1,
+                trackNumber = allocateTrackNumber(f, side),
                 x = x, y = y,
                 isNewThisTurn = true
             )
@@ -548,7 +584,44 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         measureLog.clear()
     }
 
-    /** 导出测量 CSV（桌面版 Measurement CSV：TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI/Yards/Meters） */
+    /**
+     * 导出相对位置 CSV（D5 决策：桌面版 ExportData.RelativeUnitPositions）。
+     * 表头：TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI,Range Yards,Range Meters
+     * 每行 = 一个单位相对参考单位（选中单位，无则第一个）的方位/距离，三列距离同时输出。
+     * 文件名：<前缀>_<日期>_<时间>.csv（JAN..DEC 月份缩写，桌面版格式）。
+     */
+    fun exportRelativePositionsCsv(directory: Uri) {
+        val f = file ?: run { toast("请先打开一个场景"); return }
+        if (f.units.isEmpty()) { toast("场景无单位"); return }
+        val ref = f.units.firstOrNull { it.idNum == selectedUnitId } ?: f.units.first()
+        val refName = "TN ${ref.trackNumber} ${ref.name}".trim()
+        try {
+            val sb = StringBuilder()
+            sb.append("TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI,Range Yards,Range Meters\n")
+            f.units.forEach { u ->
+                if (u.idNum == ref.idNum) return@forEach
+                val bearing = CoordUtil.bearingDeg(ref.x, ref.y, u.x, u.y)
+                val distNm = CoordUtil.distanceNm(ref.x, ref.y, u.x, u.y)
+                val distYards = distNm * CoordUtil.YARDS_PER_NMI
+                val distMeters = distNm * 1852.0
+                val altDepth = u.altitude ?: u.depth ?: 0
+                sb.append("${u.trackNumber},")
+                sb.append("${u.x},${u.y},")
+                sb.append("${String.format("%.0f", u.courseDeg())},${String.format("%.0f", u.speedKnots())},$altDepth,")
+                sb.append("${String.format("%.1f", bearing)},${String.format("%.2f", distNm)},${String.format("%.1f", distYards)},${String.format("%.1f", distMeters)}\n")
+            }
+            val now = java.time.LocalDateTime.now()
+            val mon = arrayOf("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC")[now.monthValue - 1]
+            val stamp = "${now.year}_${mon}_${now.dayOfMonth}_${String.format("%02d", now.hour)}_${String.format("%02d", now.minute)}"
+            val uri = repo.createFile(directory, "TN ${ref.trackNumber}_$stamp.csv", "text/csv")
+            repo.writeText(uri, sb.toString())
+            toast("已导出相对位置 CSV（参考：$refName，${f.units.size - 1} 个单位）")
+        } catch (e: Exception) {
+            toast("导出失败：${e.message}")
+        }
+    }
+
+    /** 导出测量 CSV（测量线专用，表头与相对位置导出区分，避免与桌面同名功能混淆） */
     fun exportMeasureCsv(directory: Uri) {
         if (measureLog.isEmpty()) {
             toast("无测量记录")
@@ -556,15 +629,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         try {
             val sb = StringBuilder()
-            sb.append("TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI,Range Yards,Range Meters\n")
+            sb.append("Measurement,FromX,FromY,ToX,ToY,Bearing,Range NMI,Range Yards,Range Meters\n")
             measureLog.forEachIndexed { i, (start, end) ->
                 val bearing = CoordUtil.bearingDeg(start.first, start.second, end.first, end.second)
                 val distNm = CoordUtil.distanceNm(start.first, start.second, end.first, end.second)
                 val distYards = distNm * CoordUtil.YARDS_PER_NMI
                 val distMeters = distNm * 1852.0
                 sb.append("M${i + 1},")
-                sb.append("${start.first},${start.second},")
-                sb.append("0,0,0,")
+                sb.append("${start.first},${start.second},${end.first},${end.second},")
                 sb.append(String.format("%.1f,%.2f,%.1f,%.1f\n", bearing, distNm, distYards, distMeters))
             }
             val uri = repo.createFile(directory, "Measurements.csv", "text/csv")

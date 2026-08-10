@@ -133,36 +133,42 @@ class MapRenderer {
     }
 
     /** 绘制地图要素层（桌面版 Z 序：Waters→DepthPolys→Land→Countries→Cities→Border→Misc→标注） */
-    fun drawPolygons(canvas: Canvas, camera: Camera, canvasW: Int, canvasH: Int) {
+    fun drawPolygons(canvas: Canvas, camera: Camera, canvasW: Int, canvasH: Int,
+                     showCities: Boolean = true, showCountries: Boolean = true,
+                     showWaters: Boolean = true, showDepths: Boolean = true) {
         val p = parser
-        // 水域名（浅蓝半透明文字）
-        val waterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(160, 70, 120, 180)
-            textSize = 14f
-            isFakeBoldText = true
-        }
-        for ((text, x, y) in p.waterLabels) {
-            val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
-            if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
-                canvas.drawText(text, sx, sy, waterPaint)
+        // 水域名（浅蓝半透明文字）；R4：ShowWaters 开关
+        if (showWaters) {
+            val waterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(160, 70, 120, 180)
+                textSize = 14f
+                isFakeBoldText = true
+            }
+            for ((text, x, y) in p.waterLabels) {
+                val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
+                if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
+                    canvas.drawText(text, sx, sy, waterPaint)
+                }
             }
         }
 
-        // 深度色带（5 级：浅蓝→深蓝）
-        val depthColors = listOf(
-            Color.argb(60, 200, 220, 240),
-            Color.argb(80, 160, 195, 225),
-            Color.argb(100, 120, 170, 210),
-            Color.argb(120, 85, 145, 195),
-            Color.argb(140, 50, 115, 180)
-        )
-        for ((pts, lvl) in p.depthPolys) {
-            val sp = screenPath(pts, camera, canvasW, canvasH)
-            if (sp != null) {
-                canvas.drawPath(sp, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = depthColors[lvl % depthColors.size]
-                    style = Paint.Style.FILL
-                })
+        // 深度色带（5 级：浅蓝→深蓝）；R4：ShowDepths 开关
+        if (showDepths) {
+            val depthColors = listOf(
+                Color.argb(60, 200, 220, 240),
+                Color.argb(80, 160, 195, 225),
+                Color.argb(100, 120, 170, 210),
+                Color.argb(120, 85, 145, 195),
+                Color.argb(140, 50, 115, 180)
+            )
+            for ((pts, lvl) in p.depthPolys) {
+                val sp = screenPath(pts, camera, canvasW, canvasH)
+                if (sp != null) {
+                    canvas.drawPath(sp, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = depthColors[lvl % depthColors.size]
+                        style = Paint.Style.FILL
+                    })
+                }
             }
         }
 
@@ -198,27 +204,31 @@ class MapRenderer {
             val sp = screenPath(pts, camera, canvasW, canvasH)
             if (sp != null) canvas.drawPath(sp, borderPaint)
         }
-        // 国家名
-        val countryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(200, 90, 70, 40)
-            textSize = 13f
-            isFakeBoldText = true
-        }
-        for ((text, x, y) in p.countryLabels) {
-            val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
-            if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
-                canvas.drawText(text, sx, sy, countryPaint)
+        // 国家名；R4：ShowCountries 开关
+        if (showCountries) {
+            val countryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(200, 90, 70, 40)
+                textSize = 13f
+                isFakeBoldText = true
+            }
+            for ((text, x, y) in p.countryLabels) {
+                val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
+                if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
+                    canvas.drawText(text, sx, sy, countryPaint)
+                }
             }
         }
-        // 城市（黑色小字）
-        val cityPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(200, 40, 40, 40)
-            textSize = 11f
-        }
-        for ((text, x, y) in p.cityLabels) {
-            val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
-            if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
-                canvas.drawText(text, sx + 3f, sy + 3f, cityPaint)
+        // 城市（黑色小字）；R4：ShowCities 开关
+        if (showCities) {
+            val cityPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(200, 40, 40, 40)
+                textSize = 11f
+            }
+            for ((text, x, y) in p.cityLabels) {
+                val (sx, sy) = camera.worldToScreen(x, y, canvasW, canvasH)
+                if (sx in -100f..canvasW + 100f && sy in -100f..canvasH + 100f) {
+                    canvas.drawText(text, sx + 3f, sy + 3f, cityPaint)
+                }
             }
         }
         for ((pts, idx) in p.miscPolys) {

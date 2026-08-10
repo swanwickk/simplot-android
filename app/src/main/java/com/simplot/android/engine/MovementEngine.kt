@@ -12,16 +12,18 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * 运动计算引擎（移植自 scn_tool.py / simplot_cmd.py 的移动逻辑）
+ * 运动计算引擎（D9 决策 2026-08-10：向桌面版看齐）。
  *
- * 规则（鱼叉/Harpoon V）：
- * - 所有速度>0 的单位按 回合时长×航速 沿当前航向移动
- * - 转向 ≤10° 无需前冲，直接沿新航向移动
- * - 转向 >10° 需前冲 + 分段（单次最多 45°），渐进式（距离不足部分转向，0 距离不转向）
- * - 转向 ≥45° 加速减半；每 45° 转向损失航速
- * - 轨迹：移动前位置写入 PastWaypointArray（桌面版对象结构），转向点追加
- * - Range（海里，-100000=无限制）：随移动递减，耗尽后停止移动
- * - 新单位（isNewThisTurn）：当回合不移动（导弹/鱼雷发射规则）
+ * 桌面版语义（反汇编确认，伪代码_核心算法.md）：
+ * - 距离 = 速度 × 时间（整回合/分钟/秒三分支，Speed 节 → 海里）
+ * - 位移 = 距离 × (Sin航向, Cos航向)，沿当前航向匀速直行
+ * - 无转向损失 / 无前冲 / 无 45° 分段 / 无加速能力表（加速档）
+ * - MaxDistanceToMove 截断；Range 耗尽检查（三选弹窗）
+ * - 高度/深度按航路点 Ascent/Descent 速率趋近，单回合变化上限 180（E3）
+ * - 航路点到达后归档（ArchiveFutureWaypoint）
+ *
+ * 指令表（UnitMove）保留为 UI 便捷入口，但语义简化为直接设定：
+ * newCourse/courseDelta → 直接改航向；newSpeed/speedDelta/boost/decel → 直接改航速。
  */
 object MovementEngine {
 
@@ -31,22 +33,22 @@ object MovementEngine {
     // ============ 单位运动指令 ============
 
     /**
-     * 航速指令（对应移动指南 §3.2 三种写法，三选一）：
-     * - [boost]/[decel]：无数字的“提速/减速”，按尺寸等级能力最大值调整（boost 按当前航速选 0-75%/75-100% 档）
-     * - [speedDelta]：明确的“加速X节/减速X节”（负数=减速）
-     * - [newSpeed]：具体航速（节），校验本回合是否能达到；达不到按实际可达航速
+     * 航速指令（D9 简化：直接设定，无能力表/无转向损失）：
+     * - [boost]/[decel]：按尺寸等级能力表加速/减速一档（保留参考，无 75% 分档）
+     * - [speedDelta]：加速/减速 X 节（负数=减速）
+     * - [newSpeed]：具体航速（节）
      */
     data class UnitMove(
         val idNum: String,
         var newCourse: Double? = null,      // 指定新航向（度）
         var courseDelta: Double? = null,    // 相对转向量（度，右正左负）
-        var newSpeed: Double? = null,       // 指定新航速（节）——具体航速写法
-        var speedDelta: Double? = null,     // 相对加减速（节，负数=减速）——加速X节写法
-        var boost: Boolean = false,         // “提速”无数字 → 按能力表最大加速
-        var decel: Boolean = false,         // “减速”无数字 → 按能力表最大减速
+        var newSpeed: Double? = null,       // 指定新航速（节）
+        var speedDelta: Double? = null,     // 相对加减速（节，负数=减速）
+        var boost: Boolean = false,         // 提速一档（按能力表 accel）
+        var decel: Boolean = false,         // 减速一档（按能力表 decel）
         var newAltitude: Int? = null,       // 飞机新高度（米，原样存取）
         var newDepth: Int? = null,          // 潜艇新深度（米，原样存取）
-        var emergency: Boolean = false      // 急舵
+        var emergency: Boolean = false      // 急舵（保留字段，桌面版无此概念，不生效）
     )
 
     /**
@@ -61,8 +63,9 @@ object MovementEngine {
         val curTime = file.time.currentPositionTime
         // 必须在移动前捕获状态（移动会写入轨迹点，影响 detect）
         val stateBefore = TurnState.detect(file)
-        // 保存 undo 快照（深拷贝，不落盘）
+        // 保存 undo 快照（深拷贝，不落盘）；E5：连同 Objects 一起快照
         file.undoSnapshot = file.units.map { deepCopyUnit(it) }
+        file.undoObjects = file.objects.toMutableList()
 
         for (u in file.units) {
             if (u.isNewThisTurn) continue   // 新单位当回合不移动
@@ -70,74 +73,63 @@ object MovementEngine {
             applyUnitMove(file, u, move, minutes, curTime)
         }
 
-        // 高度/深度随航路点调整（桌面版 ChangeAltitude/ChangeDepth）：
-        // 每回合向首个未来航路点的 AssignedAltDepth 趋近，按 Ascent/Descent 速率，
-        // 单回合变化上限 180（×1000 定点，即 180 米/回合，桌面版 180 常量）
+        // 高度/深度随航路点调整（桌面版 ChangeAltitude/ChangeDepth）
         for (u in file.units) {
             if (u.isNewThisTurn) continue
             applyAltitudeDepth(u)
+            // E10：归档阈值用本回合实际移动距离（新航速 × 时长）
             archiveReachedWaypoint(u, distOfTurn = newSpeedOf(u) * minutes / 60.0)
         }
 
-        // 编队移动（桌面版 Formations.Move，Compass 模式）：
-        // 编队成员相对中心单位按罗盘方位角+距离重定位（中心已移动）
+        // 编队移动（桌面版 Formations.Move）：成员相对中心按编队几何重定位
         moveFormations(file.units)
 
         TurnState.advanceTime(file, interval, stateBefore)
     }
 
     /**
-     * 编队移动（桌面版 Formations.Movement.DoMove 分派三模式，反汇编确认）：
-     *
-     * 1. RelativeToCompass（罗盘方位）：
-     *    位置 = 中心 + FormationDistance × (Sin/Cos FormationBearing)
-     *    —— bearing 为绝对罗盘角（MoveCompassFormation 用 ConvertToRadians + Sin/Cos）
-     * 2. RelativeToCourse（相对航向）：
-     *    位置 = 中心 + Distance × (Sin/Cos (中心航向 + bearing))
-     *    —— bearing 相对编队航向，编队转向时成员跟随旋转（MoveCourseFormation 同样 ConvertToRadians）
-     * 3. Column（纵队）：
-     *    成员排在中心正后方（沿编队航向反向），距离 = 成员序号 × Distance
-     *    （MoveColumnFormation 不用 ConvertToRadians，按列间距排列）
-     *
-     * ⚠️ FormationDistance 单位 = **文件单位**（×100000 海里定点，与中心坐标直接相加）。
-     * 中心判定：IsFormationCenter，或同 FormationName 编队中第一个单位。
+     * 编队移动（桌面版 Formations.Movement.DoMove 分派三模式）：
+     * 1. RelativeToCompass：位置 = 中心 + Distance × (Sin/Cos FormationBearing)
+     * 2. RelativeToCourse：位置 = 中心 + Distance × (Sin/Cos (中心航向 + bearing))
+     * 3. Column：成员排在中心正后方（沿编队航向反向），距离 = 序号 × Distance
+     * E1 修复：重定位后成员 Course/Speed 同步为中心值（桌面 MoveCourseFormation 明确同步）。
      */
     private fun moveFormations(units: MutableList<Unit>) {
-        // 按 FormationName 分组；中心单位（IsFormationCenter）也要纳入分组，否则找不到中心
-        val groups = units.filter { (it.isInFormation || it.isFormationCenter) && it.formationName.isNotBlank() }
-            .groupBy { it.formationName }
-        for ((name, members) in groups) {
-            val center = members.firstOrNull { it.isFormationCenter }
+        val groups = units.filter { (it.isInFormation == true || it.isFormationCenter == true) && !it.formationName.isNullOrBlank() }
+            .groupBy { it.formationName ?: "" }
+        for ((_, members) in groups) {
+            val center = members.firstOrNull { it.isFormationCenter == true }
                 ?: members.firstOrNull() ?: continue
             val centerId = center.idNum
-            val type = center.formationType.ifBlank { "RelativeToCompass" }
-            // 纵队：中心后方成员按序号排列
+            val type = center.formationType ?: "RelativeToCompass"
             var colIdx = 1
             for (m in members) {
-                if (m.idNum == centerId || m.isFormationCenter) continue
+                if (m.idNum == centerId || m.isFormationCenter == true) continue
                 if (m.isNewThisTurn) continue
+                val bearingBase = (m.formationBearing ?: 0).toDouble() / 1000.0
+                val distFile = (m.formationDistance ?: 0).toDouble()
                 when (type) {
                     "RelativeToCourse" -> {
-                        val bearingRad = Math.toRadians((m.formationBearing.toDouble() / 1000.0) + center.courseDeg())
-                        val distFile = m.formationDistance.toDouble()
+                        val bearingRad = Math.toRadians(bearingBase + center.courseDeg())
                         m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
                         m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
                     }
                     "Column" -> {
-                        // 纵队：沿中心航向反方向，间隔递增（第一成员 Distance，第二 2×Distance…）
                         val bearingRad = Math.toRadians(center.courseDeg() + 180.0)
-                        val distFile = m.formationDistance.toDouble() * colIdx
-                        m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
-                        m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
+                        val d = distFile * colIdx
+                        m.x = center.x + (d * sin(bearingRad)).roundToInt().toLong()
+                        m.y = center.y + (d * cos(bearingRad)).roundToInt().toLong()
                         colIdx++
                     }
                     else -> {  // RelativeToCompass
-                        val bearingRad = Math.toRadians(m.formationBearing.toDouble() / 1000.0)
-                        val distFile = m.formationDistance.toDouble()
+                        val bearingRad = Math.toRadians(bearingBase)
                         m.x = center.x + (distFile * sin(bearingRad)).roundToInt().toLong()
                         m.y = center.y + (distFile * cos(bearingRad)).roundToInt().toLong()
                     }
                 }
+                // E1：成员航向/航速同步中心（桌面版 MoveCourseFormation 语义）
+                m.course = center.course
+                m.speed = center.speed
             }
         }
     }
@@ -147,22 +139,18 @@ object MovementEngine {
 
     /**
      * 高度/深度引擎：向首个未来航路点指定的高度/深度趋近。
-     *
-     * 桌面版语义（ChangeAltitude 反汇编确认）：
-     * - 目标 = waypoint.AssignedAltDepth（**实际米**，存档原样存取，无定点）
-     * - 速率 = waypoint.Ascent/Descent（米/回合）；运行时 ÷180 是 SmoothMove 每秒 tick 的换算
-     *   （默认回合 3 分钟 = 180 秒，每 tick 变化 = 速率/180，整回合累计 = 速率）
-     * - 我们 InstantMove 整回合一步 → 每回合变化 = min(速率, 距目标距离)
+     * E3 修复：单回合变化上限 180（桌面版 180 常量 = 最大变化），
+     * step = min(速率, 180, 距目标距离)。
      */
     private fun applyAltitudeDepth(u: Unit) {
         val wp = u.futureWaypointArray.firstOrNull() ?: return
+        val maxChange = 180L   // E3：桌面版单回合最大变化 180 常量
         if (u.altitude != null) {
             val target = wp.assignedAltDepth.toLong()   // 米
             val cur = u.altitude!!.toLong()             // 米
-            // 速率 = 米/回合；速率为 0 表示不调整（与桌面版 Ascent/Descent 语义一致）
             val rate = if (target > cur) wp.ascent.toLong() else wp.descent.toLong()
             if (rate > 0) {
-                val step = minOf(rate, kotlin.math.abs(target - cur))
+                val step = minOf(rate, maxChange, kotlin.math.abs(target - cur))
                 u.altitude = when {
                     target > cur -> (cur + step).toInt()
                     target < cur -> (cur - step).toInt()
@@ -173,10 +161,9 @@ object MovementEngine {
         if (u.depth != null) {
             val target = wp.assignedAltDepth.toLong()   // 米
             val cur = u.depth!!.toLong()                // 米
-            // 深度：target>cur = 下潜 → descent（下潜速率）；target<cur = 上浮 → ascent（上浮速率）
             val rate = if (target > cur) wp.descent.toLong() else wp.ascent.toLong()
             if (rate > 0) {
-                val step = minOf(rate, kotlin.math.abs(target - cur))
+                val step = minOf(rate, maxChange, kotlin.math.abs(target - cur))
                 u.depth = when {
                     target > cur -> (cur + step).toInt()
                     target < cur -> (cur - step).toInt()
@@ -188,8 +175,7 @@ object MovementEngine {
 
     /**
      * 航路点归档（桌面版 ArchiveFutureWaypoint）：单位到达首个未来航路点附近后
-     * 将其移到 PastWaypointArray 末尾（含该点位置/时间，供轨迹与回放）。
-     * 到达判定：距离 ≤ 本回合移动距离（海里）× 文件单位，或已贴点（≤ 1 海里）。
+     * 将其移到 PastWaypointArray 末尾。到达判定：距离 ≤ max(本回合移动距离, 1 海里)。
      */
     private fun archiveReachedWaypoint(u: Unit, distOfTurn: Double) {
         val wp = u.futureWaypointArray.firstOrNull() ?: return
@@ -203,66 +189,34 @@ object MovementEngine {
         }
     }
 
-    /** 深拷贝单位（保留瞬态字段） */
+    /** 深拷贝单位（保留瞬态字段）；E5：补 ignoreRange */
     private fun deepCopyUnit(src: Unit): Unit {
         val gson = com.simplot.android.data.codec.JsonUtil.gson
         val copy = gson.fromJson(gson.toJson(src), Unit::class.java)
         // 瞬态字段手动复制
         copy.isNewThisTurn = src.isNewThisTurn
         copy.maxSpeedKnots = src.maxSpeedKnots
+        copy.ignoreRange = src.ignoreRange
         return copy
     }
 
     private fun applyUnitMove(file: ScenarioFile, u: Unit, move: UnitMove?, minutes: Double, curTime: String) {
         val oldCourse = u.courseDeg()
         val oldSpeed = u.speedKnots()
-        val emergency = move?.emergency == true
 
-        // 新航向
+        // 新航向：直接设定（桌面版无前冲/分段/转向损失）
         var newCourse = oldCourse
         if (move?.newCourse != null) newCourse = move.newCourse!!
-        if (move?.courseDelta != null) newCourse = (oldCourse + move.courseDelta!!) % 360.0
-        if (newCourse < 0) newCourse += 360.0   // 规范化到 0-360
+        if (move?.courseDelta != null) newCourse = oldCourse + move.courseDelta!!
+        newCourse = ((newCourse % 360.0) + 360.0) % 360.0   // 规范化 0-360
 
-        // 新航速：三写法（具体航速 / 加速X节 / 提速减速无数字）+ 转向损失（每 45° 按表）
-        val delta = minimalDelta(oldCourse, newCourse)
-        val turnCount = turnCount(delta)
-        val turnLoss = turnCount * turnLossKnots(u, emergency)
-        val lv = SizeLevels.of(u)
-
-        // 加速能力（0-75% / 75-100% 档，按当前航速 vs 最大航速×75% 选择）
-        val accelCap = if (accelHighLane(u)) lv.accelHigh else lv.accel
-
-        var newSpeed: Double
+        // 新航速：直接设定（D9：无能力表/无 75% 档/无转向损失）
+        var newSpeed = oldSpeed
         when {
-            // 写法一：具体航速 —— 校验本回合是否能达到；达不到按实际可达
-            // 可达航速 = 原速 + 加速能力（转向≥45°减半） − 转向损失
-            move?.newSpeed != null -> {
-                val accelEff = if (abs(delta) >= 45) accelCap / 2.0 else accelCap
-                val reachable = oldSpeed + accelEff - turnLoss
-                newSpeed = minOf(move.newSpeed!!, reachable)
-                // 写法一的目标值即最终航速，不再重复扣转向损失
-            }
-            // 写法二：加速X节 / 减速X节（转向≥45°加速减半）
-            move?.speedDelta != null -> {
-                var accel = move.speedDelta!!
-                if (accel > 0 && abs(delta) >= 45) accel /= 2.0  // 转向≥45° 加速减半
-                newSpeed = oldSpeed + accel - turnLoss
-            }
-            // 写法三a：提速（无数字）→ 按能力表最大加速（转向≥45°减半）
-            move?.boost == true -> {
-                var accel = accelCap
-                if (abs(delta) >= 45) accel /= 2.0
-                newSpeed = oldSpeed + accel - turnLoss
-            }
-            // 写法三b：减速（无数字）→ 按能力表最大减速
-            move?.decel == true -> {
-                newSpeed = oldSpeed - lv.decel - turnLoss
-            }
-            // 未指定航速 → 保持原速，但转向损失照扣
-            else -> {
-                newSpeed = oldSpeed - turnLoss
-            }
+            move?.newSpeed != null -> newSpeed = move.newSpeed!!
+            move?.speedDelta != null -> newSpeed = oldSpeed + move.speedDelta!!
+            move?.boost == true -> newSpeed = oldSpeed + SizeLevels.of(u).accel
+            move?.decel == true -> newSpeed = oldSpeed - SizeLevels.of(u).decel
         }
         if (newSpeed < 0) newSpeed = 0.0
 
@@ -273,62 +227,49 @@ object MovementEngine {
         // 记录起点轨迹（移动前位置）——桌面版对象结构
         u.pastWaypointArray.add(makeWaypoint(u, curTime))
 
-        // Range 限制：可移动海里数（-100000 = 无限制；0 = 已耗尽停止）
-        // ⚠️ ignoreRange（桌面版"继续移动"三选）→ 无视 Range 限制继续航行（C3 修复）
+        // Range 限制（-100000 = 无限制；0 = 已耗尽停止）
+        // E4 修复：按实际距离扣减（roundToInt），去掉"至少扣 1 海里"的过度消耗
         var distNm = newSpeed * minutes / 60.0
         if (u.range >= 0 && !u.ignoreRange) {
             if (distNm >= u.range) {
                 distNm = u.range.toDouble()   // 本回合耗尽剩余 Range
                 u.range = 0
             } else {
-                u.range -= maxOf(1, distNm.roundToInt())   // 至少扣 1 海里
+                u.range -= maxOf(0, distNm.roundToInt())   // 0.6nm→1，0.15nm→0
             }
         }
 
+        // 位移：沿新航向直行（桌面 CalcMoveVector + Position.Offset）
         val distFile = (distNm * CoordUtil.NMI_SCALE).toLong()
         if (newSpeed <= 0 || distFile <= 0) {
-            // 0 距离：不移动不转向
+            // 0 距离：不移动（航向也不变——与既有测试语义一致）
             u.course = (oldCourse * 1000).roundToInt()
         } else {
-            val adv = advanceYards(u, emergency) * CoordUtil.NMI_SCALE / CoordUtil.YARDS_PER_NMI
-            val (nx, ny, turnPts, actualCourse) = turnMotion(
-                u.x, u.y, oldCourse, newCourse, distFile.toDouble(), adv
-            )
-            // 转向点加入轨迹（桌面版对象结构）
-            for (pt in turnPts) {
-                u.pastWaypointArray.add(
-                    Waypoint(
-                        x = pt.first, y = pt.second,
-                        altitudeDepth = altDepthOf(u),
-                        number = 1, isTurnTime = true,
-                        positionTime = curTime
-                    )
-                )
-            }
-            u.x = nx; u.y = ny
-            u.course = (actualCourse * 1000).roundToInt()
+            val rad = Math.toRadians(newCourse)
+            u.x += (distFile * sin(rad)).roundToInt().toLong()
+            u.y += (distFile * cos(rad)).roundToInt().toLong()
+            u.course = (newCourse * 1000).roundToInt()
         }
         u.speed = (newSpeed * 1000).roundToInt()
     }
 
-    // ============ 转向运动（渐进式） ============
+    // ============ 参考函数（保留供测试/文档引用；D9 后不再用于主移动路径） ============
 
     data class TurnResult(val x: Long, val y: Long, val turnPoints: List<Pair<Long, Long>>, val actualCourse: Double)
 
+    /** 渐进式转向（Harpoon 纸质规则遗留，D9 后保留为参考工具，主移动路径不再调用） */
     fun turnMotion(x: Long, y: Long, oldCourse: Double, newCourse: Double,
                    distFile: Double, advanceFile: Double): TurnResult {
         if (newCourse == oldCourse) {
-            // 直行
             val dx = distFile * sin(Math.toRadians(oldCourse))
             val dy = distFile * cos(Math.toRadians(oldCourse))
             return TurnResult(x + dx.roundToInt().toLong(), y + dy.roundToInt().toLong(), emptyList(), oldCourse)
         }
         val delta = minimalDelta(oldCourse, newCourse)
         if (distFile <= 0) {
-            return TurnResult(x, y, emptyList(), oldCourse) // 0 距离：不转向
+            return TurnResult(x, y, emptyList(), oldCourse)
         }
         if (abs(delta) <= NO_ADVANCE_DEG) {
-            // ≤10° 无需前冲，直接沿新航向移动
             val dx = distFile * sin(Math.toRadians(newCourse))
             val dy = distFile * cos(Math.toRadians(newCourse))
             return TurnResult(x + dx.roundToInt().toLong(), y + dy.roundToInt().toLong(), emptyList(), newCourse)
@@ -341,7 +282,6 @@ object MovementEngine {
         val points = mutableListOf<Pair<Long, Long>>()
         for (i in 0 until n) {
             if (remaining < advanceFile) {
-                // 距离不足以完成下一次前冲：沿当前航向走完剩余，不再转向
                 val dx = remaining * sin(Math.toRadians(cur))
                 val dy = remaining * cos(Math.toRadians(cur))
                 return TurnResult((cx + dx).roundToInt().toLong(), (cy + dy).roundToInt().toLong(), points, cur)
@@ -353,13 +293,10 @@ object MovementEngine {
             remaining -= advanceFile
             cur = (cur + step) % 360.0
         }
-        // 全部前冲完成，剩余沿最终航向走
         val dx = remaining * sin(Math.toRadians(newCourse))
         val dy = remaining * cos(Math.toRadians(newCourse))
         return TurnResult((cx + dx).roundToInt().toLong(), (cy + dy).roundToInt().toLong(), points, newCourse)
     }
-
-    // ============ 规则表 ============
 
     /** 最小转向角（带符号） */
     fun minimalDelta(oldCourse: Double, newCourse: Double): Double {
@@ -372,31 +309,14 @@ object MovementEngine {
     /** 转向次数 n = ceil(|Δ|/45) */
     fun turnCount(delta: Double): Int = if (abs(delta) >= 0.5) ceil(abs(delta) / 45.0).toInt() else 0
 
-    /**
-     * 每 45° 转向航速损失（节）。
-     * 水下潜艇固定：标准舵 1 节 / 急舵 2 节（不随尺寸等级）。
-     */
-    fun turnLossKnots(u: Unit, emergency: Boolean): Double {
-        if (isSubmerged(u)) return if (emergency) 2.0 else 1.0
-        val lv = SizeLevels.of(u)
-        return if (emergency) lv.lossEmer else lv.loss
-    }
-
-    /** 单次 45° 转向前冲距离（文件单位） */
-    fun advanceYards(u: Unit, emergency: Boolean): Double {
-        if (isSubmerged(u)) return if (emergency) 200.0 else 300.0
-        val lv = SizeLevels.of(u)
-        return if (emergency) lv.advEmer else lv.adv
-    }
+    fun turnLossKnots(u: Unit, emergency: Boolean): Double = 0.0   // D9：桌面版无转向损失
+    fun advanceYards(u: Unit, emergency: Boolean): Double = 0.0    // D9：桌面版无前冲
 
     fun isSubmerged(u: Unit): Boolean = (u.depth ?: 0) > 0
 
     fun altDepthOf(u: Unit): Int = u.altitude ?: u.depth ?: 0
 
-    /**
-     * 75% 加速档判定（移动指南 §3.1/§11.6）：
-     * 当前航速 > 最大航速×75% 时用 accelHigh 列；无最大航速信息默认第一列。
-     */
+    /** 75% 加速档判定（D9 后不再用于主路径；保留供测试引用） */
     fun accelHighLane(u: Unit): Boolean {
         val max = u.maxSpeedKnots ?: return false
         return u.speedKnots() > max * 0.75
@@ -412,7 +332,7 @@ object MovementEngine {
     }
 }
 
-/** 尺寸等级能力表（对应 SIZE_LEVELS） */
+/** 尺寸等级能力表（保留供 boost/decel 一档加减速参考；D9 后无转向损失/无 75% 分档） */
 data class SizeLevel(
     val accel: Double, val accelHigh: Double, val decel: Double,
     val adv: Double, val loss: Double, val advEmer: Double, val lossEmer: Double
@@ -445,7 +365,6 @@ object SizeLevels {
     }
 
     fun of(unit: com.simplot.android.data.model.Unit): SizeLevel {
-        // maxSpeedKnots 接入：A 级快慢判定（≥25=快速A）与 F 级（≥30=快速F）
         return TABLE[levelName(unit.unitClass, unit.maxSpeedKnots)] ?: TABLE["B"]!!
     }
 }

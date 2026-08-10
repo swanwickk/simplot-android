@@ -27,7 +27,7 @@ class FormationEngineTest {
         assertEquals("S001", center!!.idNum)
         val members = FormationEngine.membersOf(f.units, "Convoy")
         assertEquals(2, members.size)
-        assertTrue(members.all { it.isInFormation })
+        assertTrue(members.all { it.isInFormation == true })
     }
 
     @Test
@@ -58,8 +58,8 @@ class FormationEngineTest {
     fun `remove from formation clears flags`() {
         val f = convoyScenario()
         FormationEngine.removeFromFormation(f.units[1])
-        assertFalse(f.units[1].isInFormation)
-        assertEquals("", f.units[1].formationName)
+        assertFalse(f.units[1].isInFormation == true)
+        assertEquals(null, f.units[1].formationName)
     }
 
     @Test

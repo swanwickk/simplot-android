@@ -3,6 +3,7 @@ package com.simplot.android.render
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlin.math.roundToLong
 
 /**
  * 地图配置解析器（纯 Kotlin，无 Android 依赖 → 可纯 JVM 单测）。
@@ -108,11 +109,11 @@ class MapDataParser {
      * R5：光栅地图 .map/.txt 解析（桌面版 MercatorRaster.LoadMapData）。
      * 每行 "KEY = ***"：
      * - MAP = 光栅图片文件名（png/jpg）
-     * - SCALE = 比例尺（km/像素，桌面版 ConvertDouble 本地化解析）
+     * - SCALE = 比例尺（Double，桌面 ConvertDouble 本地化解析）
      * - CITY = 城市名|像素X|像素Y（多个 CITY 行）
      * - COUNTRY = 国家名|像素X|像素Y
-     * 换算：1 世界单位 = 1/100000 海里 = 1852/100000 米；
-     *       像素距离(米) = px × scale_km_per_px × 1000 → 世界坐标增量 = px × scale × 1000 × 100000 / 1852
+     * R6 修复（D4 决策）：桌面 LoadMapData 第 4 步 "SimPlotX/Y ← 像素 / Scale"（**除法**），
+     * 与矢量地图坐标同为海里×10000 → 再 ×10 转存档坐标（海里×100000）。
      * @param pendingMapName 输出参数：解析到的 MAP 文件名（调用方据此加载图片）
      * @return 是否解析到 SCALE（无 SCALE 时城市/国家坐标无法换算）
      */
@@ -123,7 +124,9 @@ class MapDataParser {
         if (map != null) pendingMapName?.append(map)
         if (scale == null || scale <= 0.0) return false
 
-        val pxToWorld = scale * 1000.0 * 100000.0 / 1852.0
+        // R6：桌面语义 = 像素 ÷ Scale（得到海里×10000 地图坐标），再 ×10 转存档坐标
+        // 例：px=100, scale=3.071 → 32.6（地图单位）→ 326 存档单位
+        fun toWorld(px: Double): Long = (px / scale * 10).roundToLong()
 
         Regex("(?m)^CITY\\s*=\\s*(.+)$").findAll(text).forEach { m ->
             val parts = m.groupValues[1].split("|")
@@ -131,7 +134,7 @@ class MapDataParser {
                 val name = parts[0].trim()
                 val px = parts[1].trim().toDoubleOrNull() ?: return@forEach
                 val py = parts[2].trim().toDoubleOrNull() ?: return@forEach
-                cityLabels.add(Triple(name, (px * pxToWorld).toLong(), (py * pxToWorld).toLong()))
+                cityLabels.add(Triple(name, toWorld(px), toWorld(py)))
             }
         }
         Regex("(?m)^COUNTRY\\s*=\\s*(.+)$").findAll(text).forEach { m ->
@@ -140,7 +143,7 @@ class MapDataParser {
                 val name = parts[0].trim()
                 val px = parts[1].trim().toDoubleOrNull() ?: return@forEach
                 val py = parts[2].trim().toDoubleOrNull() ?: return@forEach
-                countryLabels.add(Triple(name, (px * pxToWorld).toLong(), (py * pxToWorld).toLong()))
+                countryLabels.add(Triple(name, toWorld(px), toWorld(py)))
             }
         }
         return true

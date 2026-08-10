@@ -167,8 +167,12 @@ fun SceneCanvas(
         // 地图贴图（如有）
         mapRenderer.drawBitmap(drawContext.canvas.nativeCanvas, camera, w, h)
 
-        // 陆地/覆盖多边形 + 标注（官方地图）
-        mapRenderer.drawPolygons(drawContext.canvas.nativeCanvas, camera, w, h)
+        // 陆地/覆盖多边形 + 标注（官方地图；R4：城市/国家/水域/深度开关接线）
+        mapRenderer.drawPolygons(
+            drawContext.canvas.nativeCanvas, camera, w, h,
+            showCities = settings.showCities, showCountries = settings.showCountries,
+            showWaters = settings.showWaters, showDepths = settings.showDepths
+        )
 
         // 网格（R4：ShowGrid 开关）
         if (settings.showGrid) {
@@ -186,9 +190,17 @@ fun SceneCanvas(
         if (!replaying) {
             for (u in file.units) {
                 ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, settings.showSensors, settings.showWeapons)
-                // R7：被动方位线（声呐/ES）
-                com.simplot.android.render.BearingRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
+                // 被动方位线（R4：ShowSonar / ShowEs 开关）
+                com.simplot.android.render.BearingRenderer.draw(
+                    drawContext.canvas.nativeCanvas, u, camera, w, h,
+                    showSonar = settings.showSonar, showEs = settings.showEs
+                )
             }
+        }
+
+        // 编队连线（桌面版 ShowFormations）：同编队成员与中心连线（细灰线）
+        if (settings.showFormations) {
+            drawFormationLines(drawContext.canvas.nativeCanvas, file.units, camera, w, h)
         }
 
         // Misc 标注（R7：桌面版 MiscBox/Oval/Line/Polygon/Label，Overlay 层）
@@ -207,7 +219,8 @@ fun SceneCanvas(
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     val frameUnit = u.copy(x = pos.x, y = pos.y)
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy,
-                        sizePx = UnitRenderer.iconSizePx(camera.zoom), symbolStyle = symbolStyle)
+                        sizePx = UnitRenderer.iconSizePx(camera.zoom), symbolStyle = symbolStyle,
+                        showSpeedLeader = settings.showSpeedLeaders)
                     if (settings.showLabels) {
                         drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom)
                     }
@@ -218,7 +231,8 @@ fun SceneCanvas(
                 val (sx, sy) = camera.worldToScreen(u.x, u.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy,
-                        sizePx = UnitRenderer.iconSizePx(camera.zoom), selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle)
+                        sizePx = UnitRenderer.iconSizePx(camera.zoom), selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle,
+                        showSpeedLeader = settings.showSpeedLeaders)
                     if (settings.showLabels) {
                         drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom)
                     }
@@ -336,21 +350,52 @@ private fun drawMeasureLine(
 /** 标签绘制（名称 + 航向航速）：字号与锚点偏移随 zoom 等比缩放（Bug 2 / 反馈⑥） */
 private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, sy: Float, zoom: Float) {
     val tag = u.textTags
-    if (!tag.tagName && !tag.tagCourseSpeed) return
-    // k = 缩放比例（UnitRenderer.labelScaleK：zoom/LABEL_BASE_ZOOM，clamp 0.7..2.5，默认 zoom 下 k=1）
+    // R7 修复：按桌面版 9 项 TagXxx 开关拼装（桌面 Create*Tag 格式串）；
+    // 无任何开关开启时不画
+    if (!tag.tagName && !tag.tagCourseSpeed && !tag.tagTrackNum && !tag.tagClass && !tag.tagUnitType &&
+        !tag.tagAltitude && !tag.tagDepth && !tag.tagCallsign && tag.additionalText.isBlank()) return
     val k = UnitRenderer.labelScaleK(zoom)
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = UnitRenderer.colorOf(u.side)
         textSize = UnitRenderer.labelTextSize(zoom)
     }
     val parts = mutableListOf<String>()
+    // 桌面格式："TN 123 x 4  名称" 风格，按开关拼装
+    if (tag.tagTrackNum) parts.add("TN ${u.trackNumber}")
     if (tag.tagName && u.name.isNotEmpty()) parts.add(u.name)
+    if (tag.tagClass && u.unitClass.isNotEmpty()) parts.add(u.unitClass)
+    if (tag.tagUnitType && u.unitType.isNotEmpty()) parts.add(u.unitType)
     if (tag.tagCourseSpeed) {
-        parts.add("${u.speedKnots().toInt()}节/${u.courseDeg().toInt()}°")
+        parts.add("Course ${u.courseDeg().toInt()}°  Speed ${u.speedKnots().toInt()} kts")
     }
+    if (tag.tagAltitude && u.altitude != null) parts.add("Alt ${u.altitude} m")
+    if (tag.tagDepth && u.depth != null) parts.add("Depth ${u.depth} m")
+    if (tag.tagCallsign && u.name.isNotEmpty()) parts.add(u.name)
+    if (tag.additionalText.isNotBlank()) parts.add(tag.additionalText)
     val text = parts.joinToString("  ")
     if (text.isNotEmpty()) {
         canvas.drawText(text, sx + 10f * k, sy - 8f * k, paint)
+    }
+}
+
+/** 编队连线：同编队成员 ↔ 中心（细灰线，桌面版 ShowFormations） */
+private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit>, camera: Camera, w: Int, h: Int) {
+    val groups = units.filter { it.isInFormation == true || it.isFormationCenter == true }
+        .groupBy { it.formationName ?: "" }
+    if (groups.isEmpty()) return
+    val linePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(120, 140, 140, 140)
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 1f
+    }
+    for ((_, members) in groups) {
+        val center = members.firstOrNull { it.isFormationCenter == true } ?: members.firstOrNull() ?: continue
+        val (cx, cy) = camera.worldToScreen(center.x, center.y, w, h)
+        for (m in members) {
+            if (m.idNum == center.idNum) continue
+            val (sx, sy) = camera.worldToScreen(m.x, m.y, w, h)
+            canvas.drawLine(cx, cy, sx, sy, linePaint)
+        }
     }
 }
 

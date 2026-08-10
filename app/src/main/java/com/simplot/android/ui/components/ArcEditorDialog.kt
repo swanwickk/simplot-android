@@ -68,7 +68,7 @@ fun ArcEditorDialog(
                     )
                 }
                 Button(onClick = {
-                    sensors.add(Sensor(label = "New Sensor", isFilled = true, isVisible = true))
+                    sensors.add(Sensor(label = "New Sensor", maxRange = 50.0, arcAngle = 360.0, isFilled = true, isVisible = true))
                 }) { Text("+ 添加传感器") }
 
                 HorizontalDivider()
@@ -87,7 +87,7 @@ fun ArcEditorDialog(
                     )
                 }
                 Button(onClick = {
-                    weapons.add(Weapon(label = "New Weapon", isFilled = true, isVisible = true))
+                    weapons.add(Weapon(label = "New Weapon", maxRange = 50.0, arcAngle = 360.0, isFilled = true, isVisible = true))
                 }) { Text("+ 添加武器") }
             }
         },

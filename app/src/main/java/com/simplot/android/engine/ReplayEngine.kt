@@ -43,6 +43,7 @@ object ReplayEngine {
     /**
      * 从存档重建回放时间线。
      * @return 按时间升序的帧列表；空轨迹/无时间数据的单位仅出现在最后（当前位置）。
+     * E7 修复：单位在 PositionTimeCreated 之前、PositionTimeDeleted 之后不显示（防止"提前出现/死后复活"）。
      */
     fun buildTimeline(file: ScenarioFile): List<Frame> {
         // 收集所有时间点（字符串格式即字典序=时间序）
@@ -69,14 +70,31 @@ object ReplayEngine {
             val target = TimeUtil.parse(t)
             val positions = mutableMapOf<String, UnitPos>()
             for (u in file.units) {
-                positions[u.idNum] = positionAt(u, tracks[u] ?: emptyList(), target, currentTime)
+                positionAt(u, tracks[u] ?: emptyList(), target, currentTime)?.let { positions[u.idNum] = it }
             }
             Frame(time = t, positions = positions)
         }
     }
 
-    /** 单位在指定时刻的位置：二分查找 ≤ target 的最后一个轨迹点；无则当前位置 */
-    private fun positionAt(u: Unit, track: List<TrackPoint>, target: LocalDateTime, currentTime: LocalDateTime): UnitPos {
+    /**
+     * 单位在指定时刻的位置：二分查找 ≤ target 的最后一个轨迹点；无则当前位置。
+     * E7：单位创建前/删除后返回 null（帧中不显示）；当前时刻起用当前位置。
+     */
+    private fun positionAt(u: Unit, track: List<TrackPoint>, target: LocalDateTime, currentTime: LocalDateTime): UnitPos? {
+        // E7：创建前不显示（PositionTimeCreated 早于该帧时间才存在）
+        if (u.positionTimeCreated.isNotBlank()) {
+            try {
+                val created = TimeUtil.parse(u.positionTimeCreated)
+                if (target.isBefore(created)) return null
+            } catch (e: Exception) { /* 解析失败容忍 */ }
+        }
+        // E7：删除后不显示（PositionTimeDeleted 为哨兵值时不生效）
+        if (u.positionTimeDeleted.isNotBlank() && !u.positionTimeDeleted.startsWith("2999") && !u.positionTimeDeleted.startsWith("2020-01-01")) {
+            try {
+                val deleted = TimeUtil.parse(u.positionTimeDeleted)
+                if (!target.isBefore(deleted)) return null
+            } catch (e: Exception) { /* 容忍 */ }
+        }
         // 已到当前时间 → 当前位置（轨迹点之后单位已移动）
         if (!target.isBefore(currentTime)) {
             return UnitPos(u.idNum, u.side, u.name, u.x, u.y)

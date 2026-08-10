@@ -212,6 +212,7 @@ class MainActivity : ComponentActivity() {
                 unit = unit,
                 onApply = { vm.applyEdit(it); vm.editUnit = null },
                 onDelete = { vm.deleteUnit(it); vm.editUnit = null },
+                onShowAsSunk = { vm.showAsSunk(it); vm.editUnit = null },
                 onDuplicate = { vm.duplicateUnit(it) },
                 onDismiss = { vm.editUnit = null }
             )

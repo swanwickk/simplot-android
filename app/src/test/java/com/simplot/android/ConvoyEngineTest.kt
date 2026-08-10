@@ -25,13 +25,13 @@ class ConvoyEngineTest {
         val units = ConvoyEngine.build(f, ConvoyEngine.ConvoySpec(), nextIdCounter())
         assertEquals(7, units.size)
         // 第一艘是指挥舰（编队中心）
-        assertTrue(units[0].isFormationCenter)
+        assertTrue(units[0].isFormationCenter == true)
         assertEquals("COMMODORE", units[0].name)
         assertEquals("Convoy", units[0].formationName)
         // 其余是环绕 Merchant
         units.drop(1).forEach { m ->
             assertEquals("Merchant", m.unitType)
-            assertTrue(m.isInFormation)
+            assertTrue(m.isInFormation == true)
             assertEquals("Convoy", m.formationName)
             // 都有位置偏移（环绕中心）
             assertTrue(m.x != 0L || m.y != 0L)
@@ -49,7 +49,7 @@ class ConvoyEngineTest {
         assertEquals(4, units.size)
         assertEquals("TASK FORCE", units[0].name)
         // 三艘商船方位角均匀：0/120/240 度
-        val bearings = units.drop(1).map { it.formationBearing / 1000.0 }
+        val bearings = units.drop(1).map { (it.formationBearing ?: 0) / 1000.0 }
         assertEquals(listOf(0.0, 120.0, 240.0), bearings)
     }
 

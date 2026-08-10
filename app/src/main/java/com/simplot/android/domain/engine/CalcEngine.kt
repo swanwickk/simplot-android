@@ -35,7 +35,7 @@ object CalcEngine {
 
     /**
      * 到达时间计算（桌面版 CalcArriveTime）：
-     * 当前时间 + 距离/速度（小时）。
+     * 当前时间 + 距离/速度（小时），秒级精度（E8 修复：不再丢秒）。
      * @param currentTime 存档时间格式 "yyyy-MM-dd HH:mm:ss"
      * @param distanceNm  距离（海里）
      * @param speedKnots  航速（节），0 无法计算返回 null
@@ -44,10 +44,10 @@ object CalcEngine {
     fun arriveTime(currentTime: String, distanceNm: Double, speedKnots: Double): String? {
         if (speedKnots <= 0) return null
         val hours = distanceNm / speedKnots
-        val minutes = (hours * 60).toLong()
+        val seconds = (hours * 3600).toLong()   // E8：秒级取整（桌面 CalcArriveTime 天/时/分/秒逐级 Floor）
         return try {
             val dt = com.simplot.android.data.util.TimeUtil.parse(currentTime)
-            dt.plusMinutes(minutes).format(com.simplot.android.data.util.TimeUtil.FORMAT)
+            dt.plusSeconds(seconds).format(com.simplot.android.data.util.TimeUtil.FORMAT)
         } catch (e: Exception) {
             null
         }

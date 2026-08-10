@@ -195,7 +195,7 @@ class EngineTest {
         assertTrue(wp[0].isTurnTime)
     }
 
-    // ============ 极地行动第一回合回归基准（移动指南 §10） ============
+    // ============ D9 桌面化回归（2026-08-10：无转向损失/无前冲/无加速档，匀速直航） ============
 
     private fun polarUnit(id: String, course: Double, maxSpeed: Double, unitClass: String = "CL"): Unit {
         return surfaceUnit(id, "Blue", 0, 0, 12.0, course).apply {
@@ -208,96 +208,58 @@ class EngineTest {
         com.simplot.android.engine.SizeLevels.levelName(unitClass, maxSpeed)
 
     @Test
-    fun `polar action sharnhorst boost turn 60`() {
-        // 沙恩霍斯特 快速A(31节) 12节 090°：加速 + 右转60°
-        val u = polarUnit("S001", 90.0, 31.0, "BB")
-        assertEquals("fastA", levelClass("BB", 31.0))
-        val f = scenario(listOf(u))
-        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
-            "S001" to MovementEngine.UnitMove("S001", newCourse = 150.0, boost = true)
-        ))
-        val moved = f.units.first()
-        assertEquals(11.0, moved.speedKnots(), 0.01)   // 12+3(减半)−4
-        assertEquals(150.0, moved.courseDeg(), 0.01)   // 前冲400×2 完成
-    }
-
-    @Test
-    fun `polar action gneisenau decel turn 80 stops`() {
-        // 格奈森瑙 快速A(31节) 12节 090°：减速 + 右转80° → 12−9−4=−1→0，距离0不转向
+    fun `d9 course change applies directly no turn loss`() {
+        // D9：转向直接生效（无前冲/无 45° 分段/无转向损失）；12 节右转 60° → 沿新航向匀速直行
         val u = polarUnit("S001", 90.0, 31.0, "BB")
         val f = scenario(listOf(u))
         MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
-            "S001" to MovementEngine.UnitMove("S001", newCourse = 170.0, decel = true)
+            "S001" to MovementEngine.UnitMove("S001", newCourse = 150.0)
         ))
         val moved = f.units.first()
-        assertEquals(0.0, moved.speedKnots(), 0.01)
-        assertEquals(90.0, moved.courseDeg(), 0.01)    // 航向保持
-        assertEquals(0L, moved.x)
-        assertEquals(0L, moved.y)
+        assertEquals(12.0, moved.speedKnots(), 0.01)   // 无转向损失
+        assertEquals(150.0, moved.courseDeg(), 0.01)   // 新航向立即生效
+        // 3 分钟 12 节 = 0.6 海里，沿 150°
+        val dist = kotlin.math.hypot(moved.x.toDouble() / 100000.0, moved.y.toDouble() / 100000.0)
+        assertEquals(0.6, dist, 0.001)
     }
 
     @Test
-    fun `polar action dunkirk boost straight`() {
-        // 敦刻尔克 快速A(29节) 12节 030°：加速直行 → 18节
-        val u = polarUnit("S001", 30.0, 29.0, "BB")
-        val f = scenario(listOf(u))
-        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
-            "S001" to MovementEngine.UnitMove("S001", boost = true)
-        ))
-        assertEquals(18.0, f.units.first().speedKnots(), 0.01)
-    }
-
-    @Test
-    fun `polar action moncalm boost turn left 130`() {
-        // 蒙卡姆 B(33节) 12节 030°：加速 + 左转130° → 12+5(减半)−6=11节，260°
-        val u = polarUnit("S001", 30.0, 33.0, "CA")
-        assertEquals("B", levelClass("CA", 33.0))
-        val f = scenario(listOf(u))
-        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
-            "S001" to MovementEngine.UnitMove("S001", newCourse = 260.0, boost = true)
-        ))
-        val moved = f.units.first()
-        assertEquals(11.0, moved.speedKnots(), 0.01)
-        assertEquals(260.0, moved.courseDeg(), 0.01)
-    }
-
-    @Test
-    fun `polar action voltair boost turn plus 170`() {
-        // 伏尔塔 C(39节) 12节 030°：加速 + 目标200°（最小角度+170°）→ 12+6(减半)−4=14节
-        val u = polarUnit("S001", 30.0, 39.0, "DD")
-        assertEquals("C", levelClass("DD", 39.0))
-        val f = scenario(listOf(u))
-        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
-            "S001" to MovementEngine.UnitMove("S001", newCourse = 200.0, boost = true)
-        ))
-        val moved = f.units.first()
-        assertEquals(14.0, moved.speedKnots(), 0.01)   // 12+6−4
-        assertEquals(200.0, moved.courseDeg(), 0.01)
-    }
-
-    @Test
-    fun `75 percent lane uses accelHigh`() {
-        // 当前航速 > 最大航速×75% → 用 accelHigh 列（快速A: 3 节）
-        val u = polarUnit("S001", 30.0, 31.0, "BB")
-        u.setSpeed(26.0)   // 26 > 31×0.75=23.25 → 75-100% 档
-        assertTrue(MovementEngine.accelHighLane(u))
-        val f = scenario(listOf(u))
-        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
-            "S001" to MovementEngine.UnitMove("S001", boost = true)
-        ))
-        // 26 + 3(accelHigh) = 29
-        assertEquals(29.0, f.units.first().speedKnots(), 0.01)
-    }
-
-    @Test
-    fun `new speed unreachable clamps to reachable`() {
-        // 具体航速写法：12节 B级 直行，指定 25 节但加速能力仅 10 → 可达 22
+    fun `d9 speed set directly no accel cap`() {
+        // D9：具体航速直接设定（无"可达性 clamp"）；12 节 → 25 节，本回合按 25 节移动
         val u = polarUnit("S001", 30.0, 33.0, "CA")
         val f = scenario(listOf(u))
         MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
             "S001" to MovementEngine.UnitMove("S001", newSpeed = 25.0)
         ))
-        assertEquals(22.0, f.units.first().speedKnots(), 0.01)
+        assertEquals(25.0, f.units.first().speedKnots(), 0.01)
+    }
+
+    @Test
+    fun `d9 boost adds one accel level no turn penalty`() {
+        // D9：boost = 原速 + 尺寸级 accel（无 75% 分档、无转向损失）
+        val u = polarUnit("S001", 30.0, 31.0, "BB")
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
+            "S001" to MovementEngine.UnitMove("S001", newCourse = 260.0, boost = true)
+        ))
+        // fastA accel=6 → 12+6=18；转向无损失
+        assertEquals(18.0, f.units.first().speedKnots(), 0.01)
+        assertEquals(260.0, f.units.first().courseDeg(), 0.01)
+    }
+
+    @Test
+    fun `d9 zero distance does not turn`() {
+        // D9：0 距离（停船）时不移动也不转向（与桌面 Move MaxDistanceToMove==0 直接返回一致）
+        val u = polarUnit("S001", 90.0, 31.0, "BB")
+        u.setSpeed(0.0)
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
+            "S001" to MovementEngine.UnitMove("S001", newCourse = 170.0)
+        ))
+        assertEquals(0.0, f.units.first().speedKnots(), 0.01)
+        assertEquals(90.0, f.units.first().courseDeg(), 0.01)   // 不转向
+        assertEquals(0L, f.units.first().x)
+        assertEquals(0L, f.units.first().y)
     }
 }
 
@@ -385,25 +347,27 @@ class ReplayTest {
     @Test
     fun `altitude climbs toward waypoint target at ascent rate`() {
         // 当前 1000 米 → 目标 3000 米，爬升速率 500 米/回合
+        // E3：单回合变化上限 180 → 1000+180=1180
         val f = scenario(listOf(airUnit("A001", 1000, 3000, ascent = 500)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(1500, f.units[0].altitude)
+        assertEquals(1180, f.units[0].altitude)
     }
 
     @Test
     fun `altitude descends toward waypoint target at descent rate`() {
         // 当前 3000 米 → 目标 1000 米，下降速率 800 米/回合
+        // E3：单回合变化上限 180 → 3000−180=2820
         val f = scenario(listOf(airUnit("A001", 3000, 1000, descent = 800)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(2200, f.units[0].altitude)
+        assertEquals(2820, f.units[0].altitude)
     }
 
     @Test
     fun `altitude does not overshoot target`() {
-        // 当前 1000 → 目标 1200，速率 500 → 一步到位 1200
+        // 当前 1000 → 目标 1200，速率 500 → E3 单回合上限 180 → 1000+180=1180（未超目标）
         val f = scenario(listOf(airUnit("A001", 1000, 1200, ascent = 500)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(1200, f.units[0].altitude)
+        assertEquals(1180, f.units[0].altitude)
     }
 
     @Test

@@ -62,6 +62,8 @@ object ArcRenderer {
         headingRad: Double, filled: Boolean, vbColor: String?, camera: Camera
     ) {
         if (maxRangeNm <= 0) return
+        // R1 修复：ArcAngle=0 是 0 度退化弧（桌面语义，整圆 = ArcAngle 360），不绘制
+        if (arcAngle <= 0.0) return
         val color = parseColor(vbColor)
         val radiusMax = (maxRangeNm * 100000.0 * camera.zoom).toFloat()
         val radiusMin = (minRangeNm * 100000.0 * camera.zoom).toFloat()
@@ -76,23 +78,29 @@ object ArcRenderer {
 
         // 弧：从 (航向+StartAngle) 顺时针扫 ArcAngle 度
         // Android drawArc: startAngle 0=3点钟方向，顺时针为正；罗盘 0=北（画布上方），需 -90 偏移
+        val startDeg = Math.toDegrees(headingRad).toFloat() - 90f + startAngle.toFloat()
         val sweep = arcAngle.toFloat()
-        if (sweep == 0f) {
-            // 整圆（ArcAngle=0 表示圆，桌面版约定）
-            val rect = android.graphics.RectF(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
-            canvas.drawOval(rect, paint)
-            if (minRangeNm > 0) {
-                val rectMin = android.graphics.RectF(cx - radiusMin, cy - radiusMin, cx + radiusMin, cy + radiusMin)
-                canvas.drawOval(rectMin, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    this.color = Color.WHITE
-                    this.style = Paint.Style.FILL
-                })
-                canvas.drawOval(rectMin, paint)
+
+        if (filled) {
+            // R2 修复：MinRange>0 时画 min~max 双半径环带（桌面 DrawSensorArc 逐点双半径路径）；
+            // 用 even-odd 填充：外弧 + 内弧反向构成环带，不再用白挖洞
+            if (radiusMin > 0f) {
+                val path = android.graphics.Path().apply {
+                    val outer = android.graphics.RectF(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
+                    addArc(outer, startDeg, sweep)
+                    val inner = android.graphics.RectF(cx - radiusMin, cy - radiusMin, cx + radiusMin, cy + radiusMin)
+                    addArc(inner, startDeg + sweep, -sweep)
+                    close()
+                }
+                canvas.drawPath(path, paint)
+            } else {
+                val rect = android.graphics.RectF(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
+                canvas.drawArc(rect, startDeg, sweep, true, paint)
             }
         } else {
-            val startDeg = Math.toDegrees(headingRad).toFloat() - 90f + startAngle.toFloat()
+            // 未填充：只描外弧线（useCenter=false，避免画出到圆心的两条半径线）
             val rect = android.graphics.RectF(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
-            canvas.drawArc(rect, startDeg, sweep, true, paint)
+            canvas.drawArc(rect, startDeg, sweep, false, paint)
         }
     }
 }

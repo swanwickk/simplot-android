@@ -49,7 +49,15 @@ object MiscAnnotationRenderer {
             isUnderlineText = a.isItalic
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText(a.text, sx, sy, p)
+        // R-P2：Rotation 支持（桌面版 MiscLabel 含 Rotation 字段，绕锚点旋转）
+        if (a.rotation != 0.0) {
+            canvas.save()
+            canvas.rotate(-a.rotation.toFloat(), sx, sy)
+            canvas.drawText(a.text, sx, sy, p)
+            canvas.restore()
+        } else {
+            canvas.drawText(a.text, sx, sy, p)
+        }
     }
 
     private fun drawBox(canvas: Canvas, a: MiscAnnotation.Box, camera: Camera, w: Int, h: Int) {
@@ -62,7 +70,15 @@ object MiscAnnotationRenderer {
             style = if (a.isFilled) Paint.Style.FILL else Paint.Style.STROKE
             strokeWidth = 2f
         }
-        canvas.drawRect(sx - bw / 2, sy - bh / 2, sx + bw / 2, sy + bh / 2, paint)
+        // R-P2：Rotation 支持（桌面版 MiscBox 含 Rotation）
+        if (a.rotation != 0.0) {
+            canvas.save()
+            canvas.rotate(-a.rotation.toFloat(), sx, sy)
+            canvas.drawRect(sx - bw / 2, sy - bh / 2, sx + bw / 2, sy + bh / 2, paint)
+            canvas.restore()
+        } else {
+            canvas.drawRect(sx - bw / 2, sy - bh / 2, sx + bw / 2, sy + bh / 2, paint)
+        }
     }
 
     private fun drawOval(canvas: Canvas, a: MiscAnnotation.Oval, camera: Camera, w: Int, h: Int) {
@@ -75,7 +91,15 @@ object MiscAnnotationRenderer {
             style = if (a.isFilled) Paint.Style.FILL else Paint.Style.STROKE
             strokeWidth = 2f
         }
-        canvas.drawOval(sx - bw / 2, sy - bh / 2, sx + bw / 2, sy + bh / 2, paint)
+        // R-P2：Rotation 支持（桌面版 MiscOval 含 Rotation）
+        if (a.rotation != 0.0) {
+            canvas.save()
+            canvas.rotate(-a.rotation.toFloat(), sx, sy)
+            canvas.drawOval(sx - bw / 2, sy - bh / 2, sx + bw / 2, sy + bh / 2, paint)
+            canvas.restore()
+        } else {
+            canvas.drawOval(sx - bw / 2, sy - bh / 2, sx + bw / 2, sy + bh / 2, paint)
+        }
     }
 
     private fun drawLine(canvas: Canvas, a: MiscAnnotation.Line, camera: Camera, w: Int, h: Int) {

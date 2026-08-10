@@ -93,14 +93,18 @@ object TurnState {
         val back = TimeUtil.advance(ptBefore, -minutes)
         file.time.currentPositionTime = back
         file.scenario.phase = PHASE_PLOTTING
-        // 恢复单位状态（深拷贝快照）
+        // 恢复单位状态（深拷贝快照）；E5：Objects 用快照恢复，不重建
         file.undoSnapshot?.let { snap ->
             file.units.clear()
             file.units.addAll(snap)
-            file.objects = file.units.map { it.idNum }.toMutableList()
+        }
+        file.undoObjects?.let { snap ->
+            file.objects.clear()
+            file.objects.addAll(snap)
         }
         // 移除刚确认回合（TurnTime == 回退前 PositionTime）的 Turns 记录
         file.turns.removeAll { it.turnTime == ptBefore }
         file.undoSnapshot = null
+        file.undoObjects = null
     }
 }

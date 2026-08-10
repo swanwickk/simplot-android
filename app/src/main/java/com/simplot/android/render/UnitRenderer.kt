@@ -28,15 +28,18 @@ object UnitRenderer {
     enum class SymbolStyle { NTDS, CWS, WW2 }
 
     private val sideColors = mapOf(
-        // 与 Color.rgb(r,g,b) 逐字节一致（0xFF<<24 | r<<16 | g<<8 | b），
-        // 内联为纯 Kotlin 常量以便 JVM 单测直接断言色值（android.graphics.Color 在单测中不可用）
+        // R3 修复：桌面 GetUnitColor 语义 "All"=灰, "Neutral"=白, "Red"=红, "Blue"=蓝, "Unknown"=未知色
         "Blue" to 0xFF005AC8.toInt(),      // Color.rgb(0, 90, 200)
         "Red" to 0xFFC81E1E.toInt(),       // Color.rgb(200, 30, 30)
-        "Neutral" to 0xFF787878.toInt(),   // Color.rgb(120, 120, 120)
+        "Neutral" to 0xFFFFFFFF.toInt(),   // Color.rgb(255, 255, 255) 桌面 Neutral=白
+        "All" to 0xFF787878.toInt(),       // Color.rgb(120, 120, 120) 桌面 All=灰
         "Unknown" to 0xFF5A5A5A.toInt()    // Color.rgb(90, 90, 90)
     )
 
     fun colorOf(side: String): Int = sideColors[side] ?: 0xFF5A5A5A.toInt()
+
+    /** 是否需要用深色描边保证可读性（D8：Neutral=白 在浅底图上不可见 → 加描边） */
+    fun needsOutline(side: String): Boolean = side == "Neutral" || side == "All"
 
     /** 标签基准缩放：默认视野（Camera 初始 zoom）下的“1 倍”参考（反馈⑥） */
     const val LABEL_BASE_ZOOM = 0.0015f
@@ -146,11 +149,16 @@ object UnitRenderer {
         return true
     }
 
-    fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false, symbolStyle: SymbolStyle = SymbolStyle.NTDS) {
+    fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false, symbolStyle: SymbolStyle = SymbolStyle.NTDS, showSpeedLeader: Boolean = true) {
+        // 参考点（桌面版 CReferencePoint 单独处理：虚线圆/菱形标记）——在速度领导线之前绘制
+        if (u.idNum.startsWith("R") || u.unitType.equals("Reference Point", true) || u.unitType.equals("Datum", true)) {
+            drawReferencePoint(canvas, u, sx, sy, sizePx, selected)
+            return
+        }
         // 速度领导线（桌面版 SpeedLeaders.Draw）：沿航向向前，长度与航速成比例
         // 反馈⑩：更粗更长（与图标大小匹配）：线宽 1.5f→2.5f，长度系数 2.2→3.2、上限 90→140；
-        // 起点从图标边缘出发（不遮挡航向标起点）
-        if (u.speedKnots() > 0) {
+        // 起点从图标边缘出发（不遮挡航向标起点）；R4 修复：受 ShowSpeedLeaders 开关控制
+        if (showSpeedLeader && u.speedKnots() > 0) {
             val r = sizePx / 2
             val leaderLen = (u.speedKnots() * 3.2).coerceAtLeast(14.0).coerceAtMost(140.0).toFloat()
             val hdgRad = Math.toRadians(u.courseDeg())
@@ -297,6 +305,52 @@ object UnitRenderer {
             }
             canvas.drawLine(sx - r, sy - r, sx + r, sy + r, sunk)
             canvas.drawLine(sx + r, sy - r, sx - r, sy + r, sunk)
+        }
+    }
+
+    /**
+     * 参考点符号（桌面版 CReferencePoint 单独绘制：虚线圆 + 中心菱形）。
+     * 颜色取单位阵营色（Neutral/All 白灰时带深色描边保证可见）。
+     */
+    private fun drawReferencePoint(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float, selected: Boolean) {
+        val sideColor = colorOf(u.side)
+        val r = sizePx * 0.6f
+        val dashed = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = sideColor
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                pathEffect = android.graphics.DashPathEffect(floatArrayOf(6f, 4f), 0f)
+            }
+        }
+        canvas.drawCircle(sx, sy, r, dashed)
+        // 中心菱形
+        val dia = Path().apply {
+            moveTo(sx, sy - r * 0.8f)
+            lineTo(sx + r * 0.8f, sy)
+            lineTo(sx, sy + r * 0.8f)
+            lineTo(sx - r * 0.8f, sy)
+            close()
+        }
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = sideColor; style = Paint.Style.FILL }
+        canvas.drawPath(dia, fill)
+        // D8：白色/浅色符号加深色描边
+        if (needsOutline(u.side)) {
+            val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = 0xFF333333.toInt()
+                style = Paint.Style.STROKE
+                strokeWidth = 1.5f
+            }
+            canvas.drawCircle(sx, sy, r, outline)
+            canvas.drawPath(dia, outline)
+        }
+        if (selected) {
+            val sel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = Color.rgb(255, 180, 0)
+                style = Paint.Style.STROKE
+                strokeWidth = 2.5f
+            }
+            canvas.drawCircle(sx, sy, r + 5f, sel)
         }
     }
 }

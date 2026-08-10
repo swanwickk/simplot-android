@@ -63,12 +63,15 @@ fun SettingsDialog(
                 SettingsCheckRow("显示速度领导线", s.showSpeedLeaders) { s = s.copy(showSpeedLeaders = !s.showSpeedLeaders) }
                 SettingsCheckRow("显示传感器弧", s.showSensors) { s = s.copy(showSensors = !s.showSensors) }
                 SettingsCheckRow("显示武器弧", s.showWeapons) { s = s.copy(showWeapons = !s.showWeapons) }
+                SettingsCheckRow("显示声呐线", s.showSonar) { s = s.copy(showSonar = !s.showSonar) }
+                SettingsCheckRow("显示ES线", s.showEs) { s = s.copy(showEs = !s.showEs) }
                 SettingsCheckRow("显示航路点", s.showWaypoints) { s = s.copy(showWaypoints = !s.showWaypoints) }
                 SettingsCheckRow("显示队形", s.showFormations) { s = s.copy(showFormations = !s.showFormations) }
                 SettingsCheckRow("显示城市", s.showCities) { s = s.copy(showCities = !s.showCities) }
                 SettingsCheckRow("显示国家", s.showCountries) { s = s.copy(showCountries = !s.showCountries) }
                 SettingsCheckRow("显示水域", s.showWaters) { s = s.copy(showWaters = !s.showWaters) }
                 SettingsCheckRow("显示深度区", s.showDepths) { s = s.copy(showDepths = !s.showDepths) }
+                SettingsCheckRow("显示深度键", s.showDepthKey) { s = s.copy(showDepthKey = !s.showDepthKey) }
                 HorizontalDivider()
                 Text("颜色（R7：桌面版 Colors）", style = MaterialTheme.typography.labelMedium)
                 ColorRow("背景", s.backgroundColor, listOf(0xFFF0F2F5, 0xFF1A1A2E, 0xFF102030, 0xFFE8E0D0)) { c -> s = s.copy(backgroundColor = c) }

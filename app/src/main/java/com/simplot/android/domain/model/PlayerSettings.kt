@@ -27,6 +27,8 @@ data class PlayerSettings(
     val showDepths: Boolean = true,
     val showDepthKey: Boolean = true,
     val showSonar: Boolean = true,
+    /** R4 修复：ES（电子支援）被动方位线开关（桌面 ShowEs） */
+    val showEs: Boolean = true,
     // R7：显示颜色（桌面版 Colors.SaveColors/LoadColors 键）
     val backgroundColor: Long = 0xFFF0F2F5,       // 背景
     val gridColor: Long = 0x883C789C,             // 网格

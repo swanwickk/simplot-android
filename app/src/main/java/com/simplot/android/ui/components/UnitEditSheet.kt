@@ -45,6 +45,7 @@ fun UnitEditSheet(
     unit: Unit,
     onApply: (Unit) -> kotlin.Unit,
     onDelete: (Unit) -> kotlin.Unit,
+    onShowAsSunk: (Unit) -> kotlin.Unit = {},
     onDuplicate: (Unit) -> kotlin.Unit = {},
     onDismiss: () -> kotlin.Unit
 ) {
@@ -55,6 +56,11 @@ fun UnitEditSheet(
     var speedText by remember { mutableStateOf(formatCourseSpeed(unit.speedKnots())) }
     var alt by remember { mutableStateOf(unit.altitudeMeters()?.toString() ?: "") }
     var depth by remember { mutableStateOf(unit.depthMeters()?.toString() ?: "") }
+    // R-P2：X/Y 编辑（桌面版各单位窗口有 X/Y 字段，替代无 Relocate 时的位置调整）
+    var xText by remember { mutableStateOf(unit.x.toString()) }
+    var yText by remember { mutableStateOf(unit.y.toString()) }
+    // 删除三选弹窗状态（R-P2：桌面 DeleteUnit 确认 Remove/Show as Sunk/Cancel）
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     // R9：Domain 判定（参考点无航向航速；浮标显示深度）
     val domain = com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(unit)
     val isReference = domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT
@@ -128,6 +134,22 @@ fun UnitEditSheet(
                     )
                 }
 
+                // R-P2：X/Y 位置编辑（桌面版各单位窗口有 X/Y 字段）
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = xText, onValueChange = { xText = it },
+                        label = { Text("X（文件单位）") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = yText, onValueChange = { yText = it },
+                        label = { Text("Y（文件单位）") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                }
+
                 HorizontalDivider()
                 Text("标签显示", style = MaterialTheme.typography.labelMedium)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -186,6 +208,8 @@ fun UnitEditSheet(
                 // 反馈⑨：航向 clamp 0-360；航速不限上限（仅保留下限 0，避免负航速）
                 unit.setCourse(course.toDouble().coerceIn(0.0, 360.0))
                 unit.setSpeed(speed.toDouble().coerceAtLeast(0.0))
+                xText.toLongOrNull()?.let { unit.x = it }    // R-P2：X/Y 应用
+                yText.toLongOrNull()?.let { unit.y = it }
                 if (unit.isAircraft() && alt.isNotBlank()) unit.altitude = alt.toInt()
                 if ((unit.isSubmarine() || isSonobuoy) && depth.isNotBlank()) unit.depth = depth.toInt()
                 unit.textTags.tagName = showName
@@ -209,7 +233,8 @@ fun UnitEditSheet(
         dismissButton = {
             Row {
                 androidx.compose.material3.TextButton(onClick = {
-                    onDelete(unit); onDismiss()
+                    // R-P2：删除先弹三选确认（桌面 DeleteUnit：Remove/Show as Sunk/Cancel）
+                    showDeleteConfirm = true
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
                 // R6：复制入口（桌面版 Copy Unit）
                 androidx.compose.material3.TextButton(onClick = {
@@ -220,6 +245,30 @@ fun UnitEditSheet(
             }
         }
     )
+
+    // 删除三选确认弹窗（桌面版 DeleteUnit 语义）
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("确认删除 TN ${unit.trackNumber} x ${unit.number}  (${unit.name})") },
+            text = { Text("选择操作：") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    showDeleteConfirm = false
+                    onDelete(unit); onDismiss()
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                Row {
+                    androidx.compose.material3.TextButton(onClick = {
+                        showDeleteConfirm = false
+                        onShowAsSunk(unit); onDismiss()
+                    }) { Text("Show as Sunk") }
+                    androidx.compose.material3.TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                }
+            }
+        )
+    }
 }
 
 /**

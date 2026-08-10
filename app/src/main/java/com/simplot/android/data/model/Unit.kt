@@ -28,17 +28,18 @@ data class Unit(
     @SerializedName("ShowSunk") var showSunk: Boolean = false,
     @SerializedName("IsActiveRadar") var isActiveRadar: Boolean = false,
     @SerializedName("IsActiveSonar") var isActiveSonar: Boolean = false,
-    @SerializedName("IsInFormation") var isInFormation: Boolean = false,
-    @SerializedName("IsFormationCenter") var isFormationCenter: Boolean = false,
-    @SerializedName("FormationBearing") var formationBearing: Int = 0,   // ×1000 定点（罗盘角；Course 模式为相对编队航向）
-    @SerializedName("FormationDistance") var formationDistance: Int = 0,  // 文件单位（海里×100000，桌面版 Double 原样与中心坐标相加）
-    @SerializedName("FormationName") var formationName: String = "",
-    @SerializedName("FormationType") var formationType: String = "RelativeToCompass",  // RelativeToCompass/Column/RelativeToCourse（桌面版 FormationTypes）
+    @SerializedName("IsInFormation") var isInFormation: Boolean? = null,
+    @SerializedName("IsFormationCenter") var isFormationCenter: Boolean? = null,
+    @SerializedName("FormationBearing") var formationBearing: Int? = null,   // ×1000 定点（罗盘角；Course 模式为相对编队航向）
+    @SerializedName("FormationDistance") var formationDistance: Int? = null,  // 文件单位（海里×100000，桌面版 Double 原样与中心坐标相加）
+    @SerializedName("FormationName") var formationName: String? = null,
+    @SerializedName("FormationType") var formationType: String? = null,  // RelativeToCompass/Column/RelativeToCourse；可空=非编队成员不落盘（用户原始存档无此键）
     @SerializedName("PositionTimeCreated") var positionTimeCreated: String = "",
-    @SerializedName("PositionTimeDeleted") var positionTimeDeleted: String = "2999-12-31 00:00:00",
+    @SerializedName("PositionTimeDeleted") var positionTimeDeleted: String = "2020-01-01 00:00:00",
     @SerializedName("Speed") var speed: Int = 0,                    // 航速 ×1000
     @SerializedName("Course") var course: Int = 0,                   // 航向 ×1000
     @SerializedName("Range") var range: Int = -100000,             // 可移动距离（海里），-100000=无限制
+    @SerializedName("WpDistance") var wpDistance: Int = 0,          // 航路点距离（scn_tool 特有键，用户原始存档含此键，需保留）
     @SerializedName(value = "PastWaypointArray", alternate = ["PastWaypointArray1"]) var pastWaypointArray: MutableList<Waypoint> = mutableListOf(),   // 历史轨迹点（兼容用户场景 PastWaypointArray1）
     @SerializedName(value = "FutureWaypointArray", alternate = ["FutureWaypointArray1"]) var futureWaypointArray: MutableList<Waypoint> = mutableListOf(),  // 未来航路点（兼容 FutureWaypointArray1）
     @SerializedName("TextTags") var textTags: TextTags = TextTags(),
@@ -62,7 +63,10 @@ data class Unit(
     @Transient var maxSpeedKnots: Double? = null,
 
     /** 瞬态：Range 耗尽后选择"继续移动"（桌面版 Continue Movement = 无视 Range 继续航行，不落盘） */
-    @Transient var ignoreRange: Boolean = false
+    @Transient var ignoreRange: Boolean = false,
+
+    /** 瞬态：编队 prepare 时的未来航路点备份（E12：cancel 恢复用，不落盘） */
+    @Transient var formationWaypointBackup: MutableList<Waypoint>? = null
 ) {
     // ---- 便捷换算（节/度；高度深度已是米，直接返回） ----
     fun speedKnots(): Double = speed / 1000.0

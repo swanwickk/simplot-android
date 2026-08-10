@@ -131,7 +131,7 @@ class ScenarioRoundTripTest {
         assertTrue(u0.has("Side"))
         assertTrue(u0.has("PastWaypointArray"))
         assertFalse(u0.has("PastWaypointArray1"))   // 旧键名必须消失
-        assertFalse(u0.has("WpDistance"))           // 非桌面字段必须消失
+        assertTrue(u0.has("WpDistance"))            // 用户原始存档含 WpDistance（2026-08-10 裁定保留）
         assertTrue(u0.has("TextTags"))
     }
 

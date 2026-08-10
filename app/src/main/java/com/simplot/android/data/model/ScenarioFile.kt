@@ -27,7 +27,10 @@ data class ScenarioFile(
     @SerializedName("Formations") var formations: Map<String, Any?> = emptyMap(),
 
     /** 瞬态：Do 前单位状态快照（undo 用，不落盘） */
-    @Transient var undoSnapshot: List<Unit>? = null
+    @Transient var undoSnapshot: List<Unit>? = null,
+
+    /** 瞬态：Do 前 Objects 数组快照（E5 修复：undo 不得用 units 重建 objects） */
+    @Transient var undoObjects: MutableList<String>? = null
 ) {
     companion object {
         fun fresh(): ScenarioFile = ScenarioFile()

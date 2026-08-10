@@ -6,14 +6,18 @@ import android.graphics.Paint
 import com.simplot.android.data.model.Unit
 
 /**
- * 轨迹/航路点渲染器：绘制 PastWaypointArray 历史轨迹线
- *
- * 轨迹点（桌面版对象结构）：{Name, X, Y, Speed, Course, AltitudeDepth, ...}
- * R6：补轨迹点小圆点（桌面版 TrackHistory.Draw 样式）
+ * 轨迹/航路点渲染器：
+ * - PastWaypointArray 历史轨迹线（桌面 TrackHistory）
+ * - R-P2 修复：FutureWaypointArray 未来航路点标记（空心圆 + 序号，颜色按阵营，桌面 ShowWaypoints）
  */
 object TrackRenderer {
 
     fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int) {
+        drawPast(canvas, u, camera, canvasW, canvasH)
+        drawFuture(canvas, u, camera, canvasW, canvasH)
+    }
+
+    private fun drawPast(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int) {
         val past = u.pastWaypointArray
         if (past.isEmpty()) return
 
@@ -43,6 +47,32 @@ object TrackRenderer {
         if (prev != null) {
             val (sx, sy) = camera.worldToScreen(u.x, u.y, canvasW, canvasH)
             canvas.drawLine(prev.first, prev.second, sx, sy, linePaint)
+        }
+    }
+
+    /** 未来航路点：空心圆 + 序号（桌面版 Waypoint 标记，颜色 GetWaypointColor 阵营色） */
+    private fun drawFuture(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int) {
+        val future = u.futureWaypointArray
+        if (future.isEmpty()) return
+
+        val color = UnitRenderer.colorOf(u.side)
+        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+        }
+        val num = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            textSize = 11f
+            textAlign = Paint.Align.CENTER
+            isFakeBoldText = true
+        }
+        future.forEachIndexed { i, wp ->
+            val (sx, sy) = camera.worldToScreen(wp.x, wp.y, canvasW, canvasH)
+            if (sx in -80f..canvasW + 80f && sy in -80f..canvasH + 80f) {
+                canvas.drawCircle(sx, sy, 6f, ring)
+                canvas.drawText((i + 1).toString(), sx, sy + 4f, num)
+            }
         }
     }
 }

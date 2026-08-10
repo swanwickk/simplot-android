@@ -5,6 +5,39 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.5.0] - 2026-08-11
+
+桌面版对齐大版本（审阅 + 用户 18 项决策 + 原始存档对拍后实施）。
+
+### 新增
+- **运动引擎桌面化（D9）**：移除鱼叉纸质规则的转向损失/前冲/45° 分段/加速档，改为桌面版语义「距离=速度×时间，沿当前航向匀速直行」；指令表简化为直接设定航向/航速
+- **存档字节兼容修复（P0）**：新建/复制单位维护 `Scenario.LastId/CurrentTrackNumber/CurrentPlayerTrackNumber`（桌面续编不再撞号）
+- **存档键集对齐（P1-1 + 原始档裁决）**：不再输出 `FormationType` 与 5 个编队键（未入队时）；保留用户原始存档的 `WpDistance` 字段；空 `MapFileName` 省略；`PositionTimeDeleted` 默认对齐 `2020-01-01 00:00:00`
+- **player_settings.json 桌面 schema（D6）**：默认文件改为 `Player_Settings/Display_Options` 15 键结构
+- **CSV 相对位置导出（D5）**：导出单位相对参考单位的方位/距离三列（TN 格式 + 日期文件名）；测量线导出独立表头
+- **运动命令只导出未来航路点（D7）**
+- **删除三选确认（R-P2）**：Remove / Show as Sunk / Cancel；新增「标为沉没」操作
+- **单位 X/Y 编辑（R-P2）**：编辑面板可直接改位置（替代 Relocate）
+- **未来航路点绘制（R-P2）**：空心圆 + 序号，阵营色
+- **编队连线绘制 + 编队成员航向/航速同步（E1）+ 编队取消恢复航路点（E12）**
+- **参考点符号（R-P2）**：虚线圆 + 菱形，独立绘制
+- **显示开关接线（R4）**：ShowCities/Countries/Waters/Depths/SpeedLeaders/Sonar/Es/DepthKey 全部生效
+- **阵营色对齐（R3）**：Neutral=白、All=灰（白灰符号加深色描边）
+- **弧渲染修复（R1/R2）**：ArcAngle=0 不画（桌面整圆=360）；MinRange>0 画双半径环带，不再白挖洞；未填充只描外弧
+- **光栅 SCALE 除法（R4/D4）**：SimPlotX ← 像素 ÷ Scale（桌面语义）
+- **标签格式对齐（R7）**：按 TagXxx 开关拼装桌面 TN 格式
+- **Misc 标注旋转（R-P2）**：Label/Box/Oval 支持 Rotation
+- **高度/深度单回合 180 上限（E3）**
+- **Range 扣减按实际距离（E4）**：去掉「至少扣 1 海里」的过度消耗
+- **回放过滤（E7）**：单位创建前/删除后不显示
+- **Undo 修复（E5）**：Objects 用快照恢复（不再由 units 重建）；快照保留 ignoreRange
+- **到达时间秒级精度（E8）**；**SaveAuto 用回合时间命名（P2-3）**；**运动命令玩家名（R-P3）**；**BOM 防御（P3-5）**；**潜艇类型补 Subsurface（P2-2）**；**ArcEditor 新弧默认 ArcAngle=360（R-P3）**
+
+### 测试
+- 新增 GloriousOriginalCompatTest（原始档加载/序列化键集回归 3 用例）
+- EngineTest 更新为 D9 桌面语义；新增 D9 回归 4 用例
+- 全部 **148 测试通过**
+
 ## [0.4.9] - 2026-08-10
 
 旧存档读取兼容修复（真机反馈：读取旧 Red 文件抛 IllegalStateException）。

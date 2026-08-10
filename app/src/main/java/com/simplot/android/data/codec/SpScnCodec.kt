@@ -61,11 +61,15 @@ object SpScnCodec {
         var text = String(plain, Charsets.UTF_8)
         // 去掉尾部标记（\x0c\t 可能因解码产生不可见字符）
         text = text.trimEnd('\u000c', '\t', '\r', '\n')
-        return text
+        return stripBom(text)
     }
 
-    /** 读取 .json 原始字节 → 明文 JSON 文本（尾部 \r\n） */
+    /** 读取 .json 原始字节 → 明文 JSON 文本（尾部 \r\n；P3-5：剥 BOM） */
     fun fromJsonFileBytes(raw: ByteArray): String {
-        return String(raw, Charsets.UTF_8).trimEnd('\r', '\n', '\u000c', '\t')
+        return stripBom(String(raw, Charsets.UTF_8).trimEnd('\r', '\n', '\u000c', '\t'))
     }
+
+    /** 剥 UTF-8 BOM（防御：桌面文件无 BOM，第三方工具可能带） */
+    private fun stripBom(s: String): String =
+        if (s.startsWith("\uFEFF")) s.substring(1) else s
 }

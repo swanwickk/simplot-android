@@ -24,7 +24,8 @@ object MovementOrdersCodec {
             val o = JsonObject()
             o.addProperty("IdNum", u.idNum)
             val wps = JsonArray()
-            (u.futureWaypointArray + u.pastWaypointArray).forEach { w ->
+            // D7 决策：运动命令只导出未来航路点（命令不含历史轨迹）
+            u.futureWaypointArray.forEach { w ->
                 wps.add(JsonUtil.gson.toJsonTree(w))
             }
             o.add("Waypoints", wps)

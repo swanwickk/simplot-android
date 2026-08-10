@@ -71,7 +71,10 @@ fun WaypointEditorDialog(
                         Waypoint(
                             x = unit.x, y = unit.y,
                             speed = unit.speed, course = unit.course,
-                            altitudeDepth = com.simplot.android.data.util.CoordUtil.fileToNm(unit.x).toInt(),
+                            // R12 修复：新航路点高度/深度继承单位当前值（桌面 CreateWaypoint 语义），
+                            // 原实现误用 fileToNm(unit.x)（单位 X 坐标海里值当高度）
+                            altitudeDepth = unit.altitude ?: unit.depth ?: 0,
+                            assignedAltDepth = unit.altitude ?: unit.depth ?: 0,
                             number = waypoints.size + 1,
                             isTurnTime = true,
                             positionTime = currentTime

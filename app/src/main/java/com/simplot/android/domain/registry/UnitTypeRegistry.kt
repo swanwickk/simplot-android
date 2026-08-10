@@ -45,7 +45,7 @@ object UnitTypeRegistry {
     )
 
     val SUBSURFACE_TYPES: List<String> = listOf(
-        "Torpedo", "Submarine", "Sub Diesel", "Sub Diesel Attack", "Sub Diesel Missile",
+        "Torpedo", "Subsurface", "Submarine", "Sub Diesel", "Sub Diesel Attack", "Sub Diesel Missile",
         "Sub Diesel Ballistic Missile", "Sub Nuclear", "Sub Nuclear Attack",
         "Sub Nuclear Missile", "Sub Nuclear Ballistic Missile", "Mine", "Fish"
     )
