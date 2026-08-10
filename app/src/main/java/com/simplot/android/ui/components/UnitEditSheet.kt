@@ -55,6 +55,10 @@ fun UnitEditSheet(
     var speedText by remember { mutableStateOf(formatCourseSpeed(unit.speedKnots())) }
     var alt by remember { mutableStateOf(unit.altitudeMeters()?.toString() ?: "") }
     var depth by remember { mutableStateOf(unit.depthMeters()?.toString() ?: "") }
+    // R9：Domain 判定（参考点无航向航速；浮标显示深度）
+    val domain = com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(unit)
+    val isReference = domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT
+    val isSonobuoy = domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SONOBUOY
     var showName by remember { mutableStateOf(unit.textTags.tagName) }
     var showCS by remember { mutableStateOf(unit.textTags.tagCourseSpeed) }
     var sunk by remember { mutableStateOf(unit.showSunk) }
@@ -84,26 +88,28 @@ fun UnitEditSheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.verticalScroll(rememberScrollState())
             ) {
-                OutlinedTextField(
-                    value = courseText,
-                    onValueChange = {
-                        courseText = it
-                        it.toFloatOrNull()?.let { v -> course = v }   // 非法输入保留上次有效值
-                    },
-                    label = { Text("航向（度 0-360）") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = speedText,
-                    onValueChange = {
-                        speedText = it
-                        it.toFloatOrNull()?.let { v -> speed = v }   // 非法输入保留上次有效值
-                    },
-                    label = { Text("航速（节）") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
+                if (!isReference) {
+                    OutlinedTextField(
+                        value = courseText,
+                        onValueChange = {
+                            courseText = it
+                            it.toFloatOrNull()?.let { v -> course = v }   // 非法输入保留上次有效值
+                        },
+                        label = { Text("航向（度 0-360）") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true, modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = speedText,
+                        onValueChange = {
+                            speedText = it
+                            it.toFloatOrNull()?.let { v -> speed = v }   // 非法输入保留上次有效值
+                        },
+                        label = { Text("航速（节）") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true, modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
                 if (unit.isAircraft()) {
                     OutlinedTextField(
@@ -113,7 +119,7 @@ fun UnitEditSheet(
                         singleLine = true, modifier = Modifier.fillMaxWidth()
                     )
                 }
-                if (unit.isSubmarine()) {
+                if (unit.isSubmarine() || isSonobuoy) {
                     OutlinedTextField(
                         value = depth, onValueChange = { depth = it },
                         label = { Text("深度（米）") },
@@ -181,7 +187,7 @@ fun UnitEditSheet(
                 unit.setCourse(course.toDouble().coerceIn(0.0, 360.0))
                 unit.setSpeed(speed.toDouble().coerceAtLeast(0.0))
                 if (unit.isAircraft() && alt.isNotBlank()) unit.altitude = alt.toInt()
-                if (unit.isSubmarine() && depth.isNotBlank()) unit.depth = depth.toInt()
+                if ((unit.isSubmarine() || isSonobuoy) && depth.isNotBlank()) unit.depth = depth.toInt()
                 unit.textTags.tagName = showName
                 unit.textTags.tagCourseSpeed = showCS
                 unit.showSunk = sunk
