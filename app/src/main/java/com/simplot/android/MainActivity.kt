@@ -70,6 +70,14 @@ class MainActivity : ComponentActivity() {
     private val exportDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { vm?.exportMovementOrders(it) }
     }
+    // R3：导入运动命令（桌面版 LoadMoveOrders）
+    private val importOrders = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm?.importMovementOrders(it) }
+    }
+    // R3：保存 Setup 文件（桌面版 SaveSetupFile）
+    private val saveSetupFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let { vm?.saveSetup(it) }
+    }
     private val exportCsvDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { vm?.exportMeasureCsv(it) }
     }
@@ -317,6 +325,15 @@ class MainActivity : ComponentActivity() {
             if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可导出"); return@Button }
             exportDir.launch(null)
         }) { Text("导出") }
+        Button(onClick = {
+            if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
+            importOrders.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
+        }) { Text("导入") }
+        Button(onClick = {
+            if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
+            val defaultName = vm.file?.scenario?.scenarioName?.ifBlank { "setup" } ?: "setup"
+            saveSetupFile.launch("$defaultName.json")
+        }) { Text("Setup") }
         Button(onClick = { vm.toggleReplay() }) { Text(if (vm.replayTimeline.isNotEmpty()) "退出回放" else "回放") }
     }
 

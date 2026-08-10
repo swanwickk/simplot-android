@@ -175,23 +175,57 @@ class ScenarioRepository(private val context: Context) {
      * 对齐：BuildUnitArray 字符串 ['IdNum','Waypoints']，BuildWaypointArray 调 WaypointToJson。
      */
     fun exportMovementOrders(directory: Uri, playerName: String, units: List<com.simplot.android.data.model.Unit>) {
-        val root = com.google.gson.JsonObject()
-        root.addProperty("File", "Referee")   // 桌面版根键（LoadMoveOrders 读取 File 判断格式）
-        val arr = com.google.gson.JsonArray()
-        units.forEach { u ->
-            val o = com.google.gson.JsonObject()
-            o.addProperty("IdNum", u.idNum)
-            val wps = com.google.gson.JsonArray()
-            // 未来航路点 + 当前点（桌面版 BuildWaypointArray：WaypointToJson 标准 12 键）
-            (u.futureWaypointArray + u.pastWaypointArray).forEach { w ->
-                wps.add(com.simplot.android.data.codec.JsonUtil.gson.toJsonTree(w))
-            }
-            o.add("Waypoints", wps)
-            arr.add(o)
-        }
-        root.add("Units", arr)
+        val json = com.simplot.android.data.codec.MovementOrdersCodec.toJson(units)
         val uri = childOrCreate(directory, "Movement - $playerName.json")
-        writeBytes(uri, com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(root).toByteArray(Charsets.UTF_8))
+        writeBytes(uri, json.toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * 运动命令导入（桌面版 LoadMoveOrders）：读取 Movement Orders 文件，
+     * 按 IdNum 匹配场景单位并恢复其未来航路点（JsonToWaypoint 兼容 12 键）。
+     * @return 已导入航路点的单位 IdNum 列表；找不到匹配单位时该条目跳过
+     */
+    fun importMovementOrders(uri: Uri, file: ScenarioFile): List<String> {
+        val raw = readBytes(uri)
+        val text = String(raw, Charsets.UTF_8).trim()
+        val parsed = com.simplot.android.data.codec.MovementOrdersCodec.parse(text)
+        val imported = mutableListOf<String>()
+        val byId = file.units.associateBy { it.idNum }
+        parsed.forEach { (idNum, wps) ->
+            val target = byId[idNum] ?: return@forEach
+            target.futureWaypointArray = wps.toMutableList()
+            imported.add(idNum)
+        }
+        return imported
+    }
+
+    /**
+     * 自动存档（桌面版 SaveAuto）："Referee Turn N_日期_时间.json" 写到场景同目录。
+     * 目标目录由 target 文件 URI 推导（复用 parentTreeUri）。
+     */
+    fun saveAuto(targetFileUri: Uri, data: ScenarioFile, turnNumber: Int): Boolean {
+        val parent = parentTreeUri(targetFileUri) ?: return false
+        val stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
+        val name = "Referee Turn ${turnNumber}_$stamp.json"
+        return try {
+            saveJson(childOrCreate(parent, name), data.copy(file = "Referee"))
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Setup 文件保存（桌面版 SaveSetupFile）：与场景同格式，标记 "Setup"。
+     * 写到目标文件 URI（系统「保存为」对话框）。
+     */
+    fun saveSetup(target: Uri, data: ScenarioFile): Boolean {
+        return try {
+            saveJson(target, data.copy(file = "Setup"))
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // ============ SAF 文件操作 ============

@@ -233,6 +233,40 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** 导入运动命令（桌面版 LoadMoveOrders）：恢复匹配单位的未来航路点 */
+    fun importMovementOrders(uri: Uri) {
+        val f = file ?: run { toast("请先打开一个场景"); return }
+        try {
+            val imported = repo.importMovementOrders(uri, f)
+            revision++
+            toast("已导入运动命令：${imported.size} 个单位恢复航路点")
+        } catch (e: Exception) {
+            toast("导入失败：${e.message}")
+        }
+    }
+
+    /** 自动存档（桌面版 SaveAuto）：Do 回合后调用，写 Referee Turn N json 到场景目录（静默，不打扰） */
+    fun autoSave() {
+        val f = file ?: return
+        val currentUri = currentUri ?: return
+        try {
+            val turnNo = f.turns.size + 1
+            repo.saveAuto(currentUri, f, turnNo)
+        } catch (e: Exception) {
+            // 自动存档失败不阻塞推演
+        }
+    }
+
+    /** 保存 Setup 文件（桌面版 SaveSetupFile）：与场景同格式标记 Setup */
+    fun saveSetup(target: Uri) {
+        val f = file ?: run { toast("请先打开一个场景"); return }
+        try {
+            if (repo.saveSetup(target, f)) toast("已保存 Setup 文件") else toast("保存 Setup 失败")
+        } catch (e: Exception) {
+            toast("保存 Setup 失败：${e.message}")
+        }
+    }
+
     // ============ 回合操作 ============
 
     fun doTurn() {
@@ -243,6 +277,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         revision++
         // Range 耗尽检测：桌面版三选弹窗（Continue/Delete/Stop）；已选"继续移动"不再提示
         result.rangeExhausted.firstOrNull()?.let { id -> rangeExhaustedUnit = f.units.firstOrNull { it.idNum == id } }
+        // 自动存档（桌面版 SaveAuto：每回合 Referee Turn N）
+        autoSave()
         toast("Do：已移动至 ${result.newPositionTime}")
     }
 

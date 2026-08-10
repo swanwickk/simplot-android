@@ -5,6 +5,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.2] - 2026-08-10
+
+架构重设计第三轮：运动命令导入 + 自动存档 + Setup 文件。
+
+### 新增
+- **运动命令导入**：新增导入入口（顶部「导入」），按 IdNum 匹配场景单位恢复未来航路点；编解码抽为 MovementOrdersCodec（纯 Kotlin 可单测）
+- **自动存档**：Do 回合后自动写 "Referee Turn N_日期_时间.json" 到场景目录（桌面版 SaveAuto，静默不打扰）
+- **Setup 文件保存**：顶部「Setup」按钮，与场景同格式标记 Setup（桌面版 SaveSetupFile）
+
+### 测试
+- 新增 MovementOrdersCodecTest（3 用例：导出→导入恢复航路点/忽略未知 IdNum/字段往返）——**127 测试全绿**
+
 ## [0.4.1] - 2026-08-10
 
 架构重设计第二轮：功能补齐（新单位/新位置/护航队恢复）+ UseCase 层。
