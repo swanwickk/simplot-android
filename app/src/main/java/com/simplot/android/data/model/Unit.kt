@@ -39,8 +39,8 @@ data class Unit(
     @SerializedName("Speed") var speed: Int = 0,                    // 航速 ×1000
     @SerializedName("Course") var course: Int = 0,                   // 航向 ×1000
     @SerializedName("Range") var range: Int = -100000,             // 可移动距离（海里），-100000=无限制
-    @SerializedName("PastWaypointArray") var pastWaypointArray: MutableList<Waypoint> = mutableListOf(),   // 历史轨迹点
-    @SerializedName("FutureWaypointArray") var futureWaypointArray: MutableList<Waypoint> = mutableListOf(),  // 未来航路点
+    @SerializedName(value = "PastWaypointArray", alternate = ["PastWaypointArray1"]) var pastWaypointArray: MutableList<Waypoint> = mutableListOf(),   // 历史轨迹点（兼容用户场景 PastWaypointArray1）
+    @SerializedName(value = "FutureWaypointArray", alternate = ["FutureWaypointArray1"]) var futureWaypointArray: MutableList<Waypoint> = mutableListOf(),  // 未来航路点（兼容 FutureWaypointArray1）
     @SerializedName("TextTags") var textTags: TextTags = TextTags(),
     @SerializedName("SensorArray") var sensorArray: MutableList<Sensor>? = null,       // 传感器射程弧
     @SerializedName("WeaponArray") var weaponArray: MutableList<Weapon>? = null,       // 武器射程弧

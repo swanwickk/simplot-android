@@ -5,6 +5,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.0] - 2026-08-10
+
+架构重设计第一轮：前后端分层落地（domain 层）+ 感知双视角 + 弧/航路点编辑。
+
+### 新增
+- **domain 层（后端）**：新增 `domain/registry/UnitTypeRegistry`（单位 Domain 判定 + 桌面版全量子类型表：飞机/水面/潜艇/设施/车辆/陆地编队/参考点/声呐浮标）、`domain/engine/CalcEngine`（方位/距离/新位置/到达时间，纯 Kotlin 可 JVM 单测）
+- **传感器/武器弧编辑**：新增弧编辑器对话框（增删改 MinRange/MaxRange/StartAngle/ArcAngle/填充/显示/颜色），选中单位操作条新增「弧」入口
+- **弧显示开关**：顶部工具栏「弧开/弧关」切换传感器与武器弧绘制
+- **航路点编辑**：新增航路点编辑器对话框（列表/增删/字段编辑/到达时间展示），选中单位操作条新增「航路点」入口
+- **感知双视角**：单位受限项编辑从单一蓝方视角扩展为 Blue/Red 双分组，红蓝方脱敏独立
+
+### 修复
+- `ScenarioRepository.load()` 重复代码（不可达死代码）
+- `GameViewModel` 未使用 `Intent` import
+- `RepoLoadFallbackTest` 依赖 `/tmp` 外部文件改为内存构造（可靠可回归）
+- CWS 类型映射补 `CG`（导弹巡洋舰同 CC 格），与编辑下拉选项对齐
+
+### 测试
+- 新增 CalcEngineTest（9 用例：方位/距离/新位置/到达时间）、UnitTypeRegistryTest（7 用例：Domain 判定/类型菜单）、FogOfWarDualSideTest（3 用例：红蓝脱敏独立）——**116 测试全绿**
+
 ## [0.3.8] - 2026-08-09
 
 四项优化：图标随放大变大、选中单位可编辑、CWS 独特类型图标、去掉示例功能。

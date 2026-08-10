@@ -54,7 +54,9 @@ fun SceneCanvas(
     onMeasureDone: ((start: Pair<Long, Long>, end: Pair<Long, Long>) -> kotlin.Unit)? = null,
     savedMeasures: List<Pair<Pair<Long, Long>, Pair<Long, Long>>> = emptyList(),
     unitDistances: List<UnitDistance>? = null,
-    symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
+    symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS,
+    showSensors: Boolean = true,
+    showWeapons: Boolean = true
 ) {
     val replaying = replayFrame != null
     // 重绘纪元（反馈④）：tick 变化 → LaunchedEffect 快照写；draw 阶段快照读（epoch）→ 必重绘。
@@ -179,7 +181,7 @@ fun SceneCanvas(
         // 传感器/武器射程弧（在单位下方绘制）
         if (!replaying) {
             for (u in file.units) {
-                ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
+                ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, showSensors, showWeapons)
             }
         }
 

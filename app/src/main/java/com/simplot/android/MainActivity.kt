@@ -34,14 +34,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.simplot.android.data.util.CoordUtil
 import com.simplot.android.data.util.unitDistances
 import com.simplot.android.data.model.Unit as SimUnit
 import com.simplot.android.ui.GameViewModel
+import com.simplot.android.ui.components.ArcEditorDialog
 import com.simplot.android.ui.components.ReplayBar
 import com.simplot.android.ui.components.SceneCanvas
 import com.simplot.android.ui.components.TurnControlBar
 import com.simplot.android.ui.components.UnitEditSheet
+import com.simplot.android.ui.components.WaypointEditorDialog
 import com.simplot.android.ui.theme.SimPlotTheme
 
 /**
@@ -59,8 +60,9 @@ class MainActivity : ComponentActivity() {
     private val openFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm?.loadScenario(it) }
     }
-    private val pickDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { vm?.saveThreeFiles(it) }
+    // 保存（反馈⑱：每次弹出系统「保存为」对话框，可选路径和文件名；不再直接覆盖原文件）
+    private val saveFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let { vm?.saveThreeFilesTo(it) }
     }
     private val exportDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { vm?.exportMovementOrders(it) }
@@ -125,6 +127,8 @@ class MainActivity : ComponentActivity() {
                         SelectedUnitBar(
                             unit = selUnit,
                             onEdit = { vm.editUnit = selUnit },
+                            onWaypoints = { vm.editWaypointsUnit = selUnit },
+                            onArcs = { vm.editArcUnit = selUnit },
                             onClear = { vm.selectedUnitId = null }
                         )
                     }
@@ -150,6 +154,8 @@ class MainActivity : ComponentActivity() {
                         savedMeasures = vm.measureLog,
                         unitDistances = unitDist,
                         symbolStyle = vm.symbolStyle,
+                        showSensors = vm.showSensors,
+                        showWeapons = vm.showWeapons,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
                     if (replaying) {
@@ -198,6 +204,25 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // 航路点编辑器（P1：桌面版 WindowWaypoints）
+        vm.editWaypointsUnit?.let { unit ->
+            WaypointEditorDialog(
+                unit = unit,
+                currentTime = vm.file?.time?.currentPositionTime ?: "",
+                onApply = { u, wps -> vm.applyWaypointsEdit(u, wps); vm.editWaypointsUnit = null },
+                onDismiss = { vm.editWaypointsUnit = null }
+            )
+        }
+
+        // 传感器/武器弧编辑器（P1：桌面版 ContainerSensors/ContainerWeapons）
+        vm.editArcUnit?.let { unit ->
+            ArcEditorDialog(
+                unit = unit,
+                onApply = { u, sensors, weapons -> vm.applyArcEdit(u, sensors, weapons); vm.editArcUnit = null },
+                onDismiss = { vm.editArcUnit = null }
+            )
+        }
+
         // Range 耗尽三选弹窗（桌面版 HasRangeRemaining：Continue/Delete/Stop）
         vm.rangeExhaustedUnit?.let { u ->
             AlertDialog(
@@ -216,27 +241,21 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // 新位置计算器（桌面版 ContainerNewPosition：参考单位+方位+距离 → 坐标）
-        if (vm.showCalcPosition) {
-            CalcPositionDialog(
-                units = vm.file?.units ?: emptyList(),
-                onToast = { vm.toast(it) },
-                onDismiss = { vm.showCalcPosition = false },
-                onResult = { name, x, y, bearing, distNm ->
-                    vm.toast("$name：方位 $bearing° 距离 $distNm nmi\nX=$x  Y=$y")
-                    vm.showCalcPosition = false
-                }
-            )
-        }
+        // 新位置计算器已删除（反馈⑩：功能整体移除，原顶部按钮与编辑菜单入口一并去掉）
     }
 
     @Composable
     private fun androidx.compose.foundation.layout.RowScope.TextButtonRow(vm: GameViewModel) {
-        // 顶部按钮：打开 / 保存 / 地图 / 测量 / 计算 / 护航队 / CWS-NTDS / 导出CSV / 导出 / 回放（契约7：去掉示例）
+        // 顶部按钮：打开 / 保存 / 地图 / 测量 / CWS-NTDS / 导出CSV / 导出 / 回放（契约7：去掉示例；反馈⑩：新位置、护航队功能已整体移除）
         Button(onClick = { openFile.launch(arrayOf("application/json", "application/octet-stream", "*/*")) }) {
             Text("打开")
         }
-        Button(onClick = { pickDir.launch(null) }) { Text("保存") }
+        Button(onClick = {
+            // 反馈⑱：每次保存都弹系统「保存为」对话框（选路径+文件名）
+            if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
+            val defaultName = vm.file?.scenario?.scenarioName?.ifBlank { "scenario" } ?: "scenario"
+            saveFile.launch("$defaultName.json")
+        }) { Text("保存") }
         Button(onClick = { pickMap.launch(arrayOf("image/*")) }) { Text("地图") }
         Button(onClick = {
             if (vm.file == null) return@Button
@@ -247,12 +266,11 @@ class MainActivity : ComponentActivity() {
                 vm.clearMeasures()  // 修复 B：退出测量模式清除全部测量线
             }
         }) { Text(if (vm.measureMode) "退出测量" else "测量") }
-        Button(onClick = {
-            if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可作参考"); return@Button }
-            vm.showCalcPosition = true
-        }) { Text("计算") }
-        Button(onClick = { vm.createConvoy() }) { Text("护航队") }
         Button(onClick = { vm.toggleSymbolStyle() }) { Text(if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "CWS" else "NTDS") }
+        // P1：传感器/武器弧显示开关（桌面版 Display_Options ShowSensors/ShowWeapons）
+        Button(onClick = { vm.showSensors = !vm.showSensors; vm.showWeapons = vm.showSensors }) {
+            Text(if (vm.showSensors) "弧开" else "弧关")
+        }
         Button(onClick = {
             if (vm.measureLog.isEmpty()) { vm.toast("无测量记录，先测量再导出"); return@Button }
             exportCsvDir.launch(null)
@@ -264,9 +282,15 @@ class MainActivity : ComponentActivity() {
         Button(onClick = { vm.toggleReplay() }) { Text(if (vm.replayTimeline.isNotEmpty()) "退出回放" else "回放") }
     }
 
-    /** 选中单位操作条（契约7：需求2 编辑入口显性化）：单位名+类型 + 编辑（复用 UnitEditSheet）+ 取消选中 */
+    /** 选中单位操作条（契约7：需求2 编辑入口显性化）：单位名+类型 + 编辑 + 航路点 + 弧 + 取消选中 */
     @Composable
-    private fun SelectedUnitBar(unit: SimUnit, onEdit: () -> Unit, onClear: () -> Unit) {
+    private fun SelectedUnitBar(
+        unit: SimUnit,
+        onEdit: () -> Unit,
+        onWaypoints: () -> Unit,
+        onArcs: () -> Unit,
+        onClear: () -> Unit
+    ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.secondaryContainer
@@ -283,61 +307,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = onEdit) { Text("编辑") }
+                TextButton(onClick = onWaypoints) { Text("航路点") }
+                TextButton(onClick = onArcs) { Text("弧") }
                 TextButton(onClick = onClear) { Text("取消选中") }
             }
         }
-    }
-
-    /** 新位置计算器对话框（桌面版 ContainerNewPosition） */
-    @Composable
-    private fun CalcPositionDialog(
-        units: List<SimUnit>,
-        onToast: (String) -> Unit,
-        onDismiss: () -> Unit,
-        onResult: (name: String, x: Long, y: Long, bearing: Double, distNm: Double) -> Unit
-    ) {
-        var refId by remember { mutableStateOf(units.firstOrNull()?.idNum ?: "") }
-        var bearingText by remember { mutableStateOf("") }
-        var distText by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            title = { Text("新位置计算") },
-            text = {
-                Column {
-                    Text("参考单位", style = MaterialTheme.typography.labelMedium)
-                    units.take(30).forEach { u ->
-                        Row(Modifier.fillMaxWidth()) {
-                            androidx.compose.material3.RadioButton(
-                                selected = refId == u.idNum,
-                                onClick = { refId = u.idNum }
-                            )
-                            Text("${u.name} (${u.side}) TN ${u.trackNumber}", Modifier.padding(top = 10.dp))
-                        }
-                    }
-                    OutlinedTextField(
-                        value = bearingText, onValueChange = { bearingText = it.filter { c -> c.isDigit() || c == '.' } },
-                        label = { Text("方位角(度, 0=北)") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = distText, onValueChange = { distText = it.filter { c -> c.isDigit() || c == '.' } },
-                        label = { Text("距离(海里)") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    val ref = units.firstOrNull { it.idNum == refId }
-                    val bearing = bearingText.toDoubleOrNull()
-                    val dist = distText.toDoubleOrNull()
-                    if (ref == null) { onToast("请选择参考单位"); return@Button }
-                    if (bearing == null || dist == null) { onToast("请输入方位和距离"); return@Button }
-                    val (dx, dy) = CoordUtil.offsetNm(bearing, dist)
-                    onResult(ref.name, ref.x + dx, ref.y + dy, bearing, dist)
-                }) { Text("计算") }
-            },
-            dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-        )
     }
 }

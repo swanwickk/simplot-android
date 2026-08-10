@@ -34,19 +34,24 @@ object ArcRenderer {
         }
     }
 
-    fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int) {
+    fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int,
+             showSensors: Boolean = true, showWeapons: Boolean = true) {
         val (cx, cy) = camera.worldToScreen(u.x, u.y, canvasW, canvasH)
         val headingRad = Math.toRadians(u.courseDeg())
 
         // 传感器弧
-        u.sensorArray?.forEach { s ->
-            if (!s.isVisible) return@forEach
-            drawArc(canvas, cx, cy, s.minRange, s.maxRange, s.startAngle, s.arcAngle, headingRad, s.isFilled, s.arcColor, camera)
+        if (showSensors) {
+            u.sensorArray?.forEach { s ->
+                if (!s.isVisible) return@forEach
+                drawArc(canvas, cx, cy, s.minRange, s.maxRange, s.startAngle, s.arcAngle, headingRad, s.isFilled, s.arcColor, camera)
+            }
         }
         // 武器弧
-        u.weaponArray?.forEach { w ->
-            if (!w.isVisible) return@forEach
-            drawArc(canvas, cx, cy, w.minRange, w.maxRange, w.startAngle, w.arcAngle, headingRad, w.isFilled, w.arcColor, camera)
+        if (showWeapons) {
+            u.weaponArray?.forEach { w ->
+                if (!w.isVisible) return@forEach
+                drawArc(canvas, cx, cy, w.minRange, w.maxRange, w.startAngle, w.arcAngle, headingRad, w.isFilled, w.arcColor, camera)
+            }
         }
     }
 

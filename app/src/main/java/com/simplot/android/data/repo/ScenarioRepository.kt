@@ -24,15 +24,22 @@ class ScenarioRepository(private val context: Context) {
     // ============ 读取 ============
 
     /**
-     * 从任意 URI 读取存档（自动识别明文 .json / 混淆 .SpScn）
+     * 从任意 URI 读取存档（自动识别明文 .json / 混淆 .SpScn）。
+     * 修复⑰（真机反馈：保存的 SpScn 无法读取）：SAF 的 queryName 在部分 provider 返回空/null，
+     * 导致混淆 SpScn 被当明文解析失败。改为：先按文件名后缀判断；后缀不可用时
+     * 用内容探测（明文 JSON 以 { 开头，混淆 SpScn 首个字节是密文 {+1='z'）。
      */
     fun load(uri: Uri): ScenarioFile {
         val raw = readBytes(uri)
         val name = queryName(uri).lowercase()
+        // 修复⑰（真机反馈：保存的 SpScn 无法读取）：SAF queryName 可能为空 → 后缀判断失效。
+        // 策略：后缀明确 .spscn → 解密；否则先按明文解析，失败再按 SpScn 解密（鲁棒回退）。
         val text = if (name.endsWith(".spscn")) {
             SpScnCodec.fromScnFileBytes(raw)
         } else {
-            SpScnCodec.fromJsonFileBytes(raw)
+            val plain = SpScnCodec.fromJsonFileBytes(raw)
+            if (JsonUtil.isScenarioJson(plain)) plain
+            else SpScnCodec.fromScnFileBytes(raw)
         }
         if (!JsonUtil.isScenarioJson(text)) {
             throw IllegalArgumentException("所选文件不是有效的 SimPlot 场景存档")
@@ -82,8 +89,15 @@ class ScenarioRepository(private val context: Context) {
     fun ensurePlayerSettings(directory: Uri) {
         val name = "player_settings.json"
         if (findChild(directory, name) != null) return
+        // 修复⑩：createDocument 需 document uri（tree uri 转换，同 childOrCreate）
+        val parent = try {
+            val treeId = DocumentsContract.getTreeDocumentId(directory)
+            DocumentsContract.buildDocumentUriUsingTree(directory, treeId)
+        } catch (e: Exception) {
+            directory
+        }
         val uri = DocumentsContract.createDocument(
-            context.contentResolver, directory, "application/json", name
+            context.contentResolver, parent, "application/json", name
         ) ?: return
         writeBytes(uri, SpScnCodec.toJsonFileBytes(DEFAULT_PLAYER_SETTINGS))
     }
@@ -91,6 +105,48 @@ class ScenarioRepository(private val context: Context) {
     companion object {
         /** 默认玩家显示设置（对应桌面版 player_settings.json 常见开关） */
         const val DEFAULT_PLAYER_SETTINGS: String = """{"ShowTracks":true,"ShowTrackTimes":false,"ShowTurnTrackTimes":false,"ShowUnits":true,"ShowTextTags":true,"ShowSensors":false,"ShowWeapons":false,"ShowGrid":true,"ShowScale":true,"ShowArcs":false,"ShowBearings":false}"""
+    }
+
+    /**
+     * 反馈⑱：从目标文件 document uri 推导父目录 tree uri。
+     * document uri 形如 content://.../document/primary:Dir/file.json → 父 treeId = primary:Dir。
+     * 推导失败返回 null（仅保存目标文件本身）。
+     */
+    fun parentTreeUri(documentUri: Uri): Uri? {
+        return try {
+            val docId = DocumentsContract.getDocumentId(documentUri)
+            val slash = docId.lastIndexOf('/')
+            val parentId = if (slash >= 0) docId.substring(0, slash) else docId
+            // tree uri = content://authority/tree/<parentId>
+            val treeUri = DocumentsContract.buildTreeDocumentUri(documentUri.authority, parentId)
+            // 校验可写（部分 provider 根目录不支持，交给调用方容错）
+            treeUri
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 反馈⑱：写三文件——目标文件写 Referee json；同目录写 Blue/Red.SpScn（父目录可推导时）。
+     * @return true=三文件都写了；false=只写了目标 json（父目录不可用）
+     */
+    fun saveTo(
+        target: Uri, parent: Uri?,
+        referee: ScenarioFile, blueView: ScenarioFile, redView: ScenarioFile
+    ): Boolean {
+        saveJson(target, referee.copy(file = "Referee"))
+        if (parent != null) {
+            try {
+                saveScn(childOrCreate(parent, "Blue.SpScn"), blueView.copy(file = "Blue"))
+                saveScn(childOrCreate(parent, "Red.SpScn"), redView.copy(file = "Red"))
+                ensurePlayerSettings(parent)
+                return true
+            } catch (e: Exception) {
+                // 父目录写入失败：目标 json 已保存，SpScn 留待用户手动处理
+                return false
+            }
+        }
+        return false
     }
 
     fun saveJson(uri: Uri, data: ScenarioFile) {
@@ -144,10 +200,22 @@ class ScenarioRepository(private val context: Context) {
      * 获取目录下已有子文档 URI；不存在则创建。
      * （避免重复保存生成 "Blue (1).SpScn" 副本）
      */
+    /**
+     * 在目录中创建文件（已存在则复用），返回 URI。
+     * 修复⑩（真机保存失败 Invalid URI）：DocumentsContract.createDocument 要求父目录为
+     * document uri；OpenDocumentTree 返回的是 tree uri，需先 buildDocumentUriUsingTree 转换，
+     * 否则抛 IllegalArgumentException("Invalid URI: ...")。
+     */
     private fun childOrCreate(directory: Uri, name: String): Uri {
         findChild(directory, name)?.let { return it }
+        val parent = try {
+            val treeId = DocumentsContract.getTreeDocumentId(directory)
+            DocumentsContract.buildDocumentUriUsingTree(directory, treeId)
+        } catch (e: Exception) {
+            directory   // 非 tree uri（如已有 document uri）直接使用
+        }
         return DocumentsContract.createDocument(
-            context.contentResolver, directory, "application/octet-stream", name
+            context.contentResolver, parent, "application/octet-stream", name
         ) ?: throw IllegalStateException("无法在所选目录创建文件：$name")
     }
 

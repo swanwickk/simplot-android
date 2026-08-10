@@ -26,10 +26,11 @@ class UnitRendererTest {
 
     @Test
     fun `icon size scales with zoom`() {
-        // 契约7：默认 zoom→16f（与标签同链路）；放大撞上限 40f；缩小撞下限 14f
-        assertEquals(16f, UnitRenderer.iconSizePx(0.0015f), 0.001f)
-        assertEquals(40f, UnitRenderer.iconSizePx(0.05f), 0.001f)
-        assertEquals(14f, UnitRenderer.iconSizePx(0.0005f), 0.001f)
+        // 契约7/反馈⑩：默认 zoom→12dp；放大撞上限 32dp（不遮挡航向标）；缩小撞下限 10dp
+        // 注：单测环境 appContext==null → density=1，断言即 dp 数值
+        assertEquals(12f, UnitRenderer.iconSizePx(0.0015f), 0.001f)
+        assertEquals(32f, UnitRenderer.iconSizePx(0.05f), 0.001f)
+        assertEquals(10f, UnitRenderer.iconSizePx(0.0005f), 0.001f)
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.simplot.android.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -44,18 +45,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var file by mutableStateOf<ScenarioFile?>(null)
         private set
 
+    /** 当前打开存档的 URI（供自动加载同目录地图等） */
+    var currentUri by mutableStateOf<Uri?>(null)
+        private set
+
     // 以下为纯 UI 交互状态（点选/编辑/测量/计算弹窗），UI 直接读写
     var selectedUnitId by mutableStateOf<String?>(null)
     var editUnit by mutableStateOf<SimUnit?>(null)
     var measureMode by mutableStateOf(false)
-    var showCalcPosition by mutableStateOf(false)
+    /** 弧（传感器/武器）编辑目标单位（P1：RangeGraphics 编辑入口） */
+    var editArcUnit by mutableStateOf<SimUnit?>(null)
+    /** 航路点编辑目标单位（P1：WindowWaypoints 对应） */
+    var editWaypointsUnit by mutableStateOf<SimUnit?>(null)
+
+    /** 传感器/武器弧显示开关（对应桌面版 Display_Options ShowSensors/ShowWeapons） */
+    var showSensors by mutableStateOf(true)
+    var showWeapons by mutableStateOf(true)
 
     /** 已完成的测量（桌面版 Measurement，用于 CSV 导出 + 画布留存绘制）：起终点世界坐标
      *  SnapshotStateList：draw 阶段迭代读 → 变更即触发 Canvas 失效重绘（反馈①修复核心） */
     val measureLog = mutableStateListOf<Pair<Pair<Long, Long>, Pair<Long, Long>>>()
 
-    /** 符号风格（桌面版玩家设置：NTDS / CWS） */
-    var symbolStyle by mutableStateOf(com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS)
+    /** 符号风格（桌面版玩家设置：NTDS / CWS）；契约8：默认 CWS（打开存档即显示类型独特精灵图标，NTDS 仍可手动切换） */
+    var symbolStyle by mutableStateOf(com.simplot.android.render.UnitRenderer.SymbolStyle.CWS)
 
     /** 显式版本号：任何场景变更后自增，驱动 Compose 重组（替代 turnTick） */
     var revision by mutableStateOf(0)
@@ -91,6 +103,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 从任意 URI 加载存档，并尝试自动加载场景自带地图 */
     fun loadScenario(uri: Uri) {
+        currentUri = uri
         try {
             val loaded = repo.load(uri)
             applyLoaded(loaded)
@@ -183,18 +196,21 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============ 保存 / 导出 ============
 
-    /** 保存四文件（红蓝视角按感知过滤） */
-    fun saveThreeFiles(directory: Uri) {
+    /**
+     * 反馈⑱：保存三文件到指定目标文件（系统「保存为」对话框返回的 document uri）。
+     * 目标文件写 Referee json；Blue/Red.SpScn 写到同一目录（由目标文件 documentId 推导父目录 tree uri）。
+     */
+    fun saveThreeFilesTo(targetUri: Uri) {
         val current = file ?: run {
             toast("请先打开一个场景")
             return
         }
         try {
-            val fileName = current.scenario.scenarioName.ifBlank { "scenario" }
             val blueView = FogOfWar.applyPerspective(current, "Blue")
             val redView = FogOfWar.applyPerspective(current, "Red")
-            repo.savePerceptionAware(directory, fileName, current, blueView, redView)
-            toast("已保存：$fileName.json + Blue.SpScn + Red.SpScn")
+            val parent = repo.parentTreeUri(targetUri)
+            val saved = repo.saveTo(targetUri, parent, current, blueView, redView)
+            toast(if (saved) "已保存：Referee json + Blue.SpScn + Red.SpScn" else "已保存 Referee json")
         } catch (e: Exception) {
             toast("保存失败：${e.message}")
         }
@@ -252,6 +268,27 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** 弧（传感器/武器）编辑应用：替换目标单位的 SensorArray/WeaponArray */
+    fun applyArcEdit(unit: SimUnit, sensors: List<com.simplot.android.data.model.Sensor>, weapons: List<com.simplot.android.data.model.Weapon>) {
+        file?.let { f ->
+            val idx = f.units.indexOfFirst { it.idNum == unit.idNum }
+            if (idx >= 0) {
+                f.units[idx].sensorArray = sensors.toMutableList()
+                f.units[idx].weaponArray = weapons.toMutableList()
+            }
+            revision++
+        }
+    }
+
+    /** 航路点编辑应用：替换目标单位的 FutureWaypointArray */
+    fun applyWaypointsEdit(unit: SimUnit, waypoints: List<com.simplot.android.data.model.Waypoint>) {
+        file?.let { f ->
+            val idx = f.units.indexOfFirst { it.idNum == unit.idNum }
+            if (idx >= 0) f.units[idx].futureWaypointArray = waypoints.toMutableList()
+            revision++
+        }
+    }
+
     fun deleteUnit(unit: SimUnit) {
         file?.let { f ->
             f.units.removeAll { it.idNum == unit.idNum }
@@ -284,54 +321,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             selectedUnitId = copy.idNum
             revision++
             toast("已复制：${copy.name}")
-        }
-    }
-
-    /**
-     * 生成护航队（桌面版 Game.Convoy.CreateConvoy）：
-     * COMMODORE 居中，Merchant 环绕，dist=2000 码，角度均匀分布。
-     * FormationDistance 单位 = 文件单位（×100000 海里定点）。
-     */
-    fun createConvoy() {
-        file?.let { f ->
-            val commodore = SimUnit(
-                idNum = nextId(f),
-                side = "Blue",
-                unitType = "Merchant",
-                unitClass = "AO",
-                name = "COMMODORE",
-                trackNumber = (f.units.maxOfOrNull { it.trackNumber } ?: 2400) + 1,
-                isNewThisTurn = true,
-                isFormationCenter = true,
-                formationName = "Convoy"
-            )
-            val units = mutableListOf(commodore)
-            val escortCount = 6
-            val distFile = CoordUtil.yardsToFile(2000.0).toInt()
-            for (i in 0 until escortCount) {
-                val angle = 360.0 / escortCount * i
-                val (dx, dy) = CoordUtil.offsetYards(angle, 2000.0)
-                units.add(
-                    SimUnit(
-                        idNum = nextId(f),
-                        side = "Blue",
-                        unitType = "Merchant",
-                        unitClass = "AO",
-                        name = "Merchant ${i + 1}",
-                        trackNumber = (f.units.maxOfOrNull { it.trackNumber } ?: 2400) + 1 + i + 1,
-                        x = commodore.x + dx,
-                        y = commodore.y + dy,
-                        isNewThisTurn = true,
-                        isInFormation = true,
-                        formationName = "Convoy",
-                        formationBearing = (angle * 1000).toInt(),
-                        formationDistance = distFile
-                    )
-                )
-            }
-            f.units.addAll(units)
-            revision++
-            toast("已生成护航队：1 COMMODORE + $escortCount 商船")
         }
     }
 
