@@ -5,6 +5,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.5] - 2026-08-10
+
+架构重设计第六轮：编队引擎（准备/撤销）+ 复制分派增强 + 轨迹点样式。
+
+### 新增
+- **编队管理**：新增编队对话框（桌面版 WindowFormation），列出现有编队，支持移动准备（DoPrepare）/撤销（DoCancel）；逻辑抽为 FormationEngine 纯 Kotlin
+- **复制分派增强**：duplicateUnit 用 UnitTypeRegistry.domainOf 判定 Domain（替代 idNum 前缀硬编码），陆上单位（Installation/LandFormation）不复制传感器/武器，IdNum 按 Domain 前缀分派；编辑面板新增「复制」按钮
+- **历史轨迹增强**：轨迹点绘制小圆点（桌面版 TrackHistory 样式）
+
+### 测试
+- 新增 FormationEngineTest（5 用例：中心/成员识别、准备记录位置、撤销恢复、移出编队、编队列表）——**140 测试全绿**
+
 ## [0.4.4] - 2026-08-10
 
 架构重设计第五轮：WW2 符号 + 光栅地图（.map/.txt）解析。

@@ -39,6 +39,7 @@ import com.simplot.android.data.model.Unit as SimUnit
 import com.simplot.android.ui.GameViewModel
 import com.simplot.android.ui.components.ArcEditorDialog
 import com.simplot.android.ui.components.ConvoyDialog
+import com.simplot.android.ui.components.FormationDialog
 import com.simplot.android.ui.components.NewPositionDialog
 import com.simplot.android.ui.components.NewUnitDialog
 import com.simplot.android.ui.components.ReplayBar
@@ -271,6 +272,16 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // 编队管理（R6：桌面版 WindowFormation）
+        if (vm.showFormation) {
+            FormationDialog(
+                formationNames = vm.formationNames(),
+                onDismiss = { vm.showFormation = false },
+                onPrepare = { name -> vm.formationPrepare(name) },
+                onCancel = { name -> vm.formationCancel(name) }
+            )
+        }
+
         // Range 耗尽三选弹窗（桌面版 HasRangeRemaining：Continue/Delete/Stop）
         vm.rangeExhaustedUnit?.let { u ->
             AlertDialog(
@@ -312,6 +323,7 @@ class MainActivity : ComponentActivity() {
             vm.showNewPosition = true
         }) { Text("新位置") }
         Button(onClick = { if (vm.file != null) vm.showConvoy = true else vm.toast("请先打开一个场景") }) { Text("护航队") }
+        Button(onClick = { if (vm.file != null) vm.showFormation = true else vm.toast("请先打开一个场景") }) { Text("编队") }
         Button(onClick = {
             if (vm.file == null) return@Button
             if (vm.replayTimeline.isNotEmpty()) { vm.toast("回放中不可测量"); return@Button }

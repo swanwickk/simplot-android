@@ -205,6 +205,10 @@ fun UnitEditSheet(
                 androidx.compose.material3.TextButton(onClick = {
                     onDelete(unit); onDismiss()
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                // R6：复制入口（桌面版 Copy Unit）
+                androidx.compose.material3.TextButton(onClick = {
+                    onDuplicate(unit); onDismiss()
+                }) { Text("复制") }
                 // 反馈⑨：编辑菜单加「取消」（不应用、不删除，仅关闭），顺序：删除、取消、应用
                 androidx.compose.material3.TextButton(onClick = { onDismiss() }) { Text("取消") }
             }

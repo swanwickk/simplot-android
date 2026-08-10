@@ -70,6 +70,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         private set
     /** 设置弹窗开关 */
     var showSettings by mutableStateOf(false)
+    /** 编队管理弹窗开关（R6：桌面版 WindowFormation） */
+    var showFormation by mutableStateOf(false)
 
     /** 已完成的测量（桌面版 Measurement，用于 CSV 导出 + 画布留存绘制）：起终点世界坐标
      *  SnapshotStateList：draw 阶段迭代读 → 变更即触发 Canvas 失效重绘（反馈①修复核心） */
@@ -376,20 +378,24 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 单位复制（桌面版 CopyUnit）：深拷贝 + 新 IdNum/TrackNumber + 附近偏移。
-     * 陆上单位（Installation/LandFormation）不复制传感器/武器。
+     * 陆上单位（Installation/LandFormation）不复制传感器/武器（桌面版 CopyLandUnit 无 CopySensors）。
+     * R6：Domain 判定用 UnitTypeRegistry（替代 idNum 前缀硬编码）。
      */
     fun duplicateUnit(unit: SimUnit) {
         file?.let { f ->
             val gson = com.simplot.android.data.codec.JsonUtil.gson
             val copy = gson.fromJson(gson.toJson(unit), SimUnit::class.java)
-            copy.idNum = nextId(f)
+            copy.idNum = nextId(f, domainPrefix(unit))
             copy.trackNumber = (f.units.maxOfOrNull { it.trackNumber } ?: 2400) + 1
             copy.name = unit.name + " (副本)"
             copy.isNewThisTurn = true
             val (dx, dy) = CoordUtil.offsetNm(135.0, 2.0)
             copy.x = unit.x + dx
             copy.y = unit.y + dy
-            if (copy.idNum.startsWith("L")) {
+            val domain = com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(unit)
+            if (domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.INSTALLATION ||
+                domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.LAND_FORMATION
+            ) {
                 copy.sensorArray = null
                 copy.weaponArray = null
             }
@@ -398,6 +404,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             revision++
             toast("已复制：${copy.name}")
         }
+    }
+
+    /** Domain → IdNum 前缀（桌面版 GetIdNumber 分派） */
+    private fun domainPrefix(u: SimUnit): String = when (com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(u)) {
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SURFACE -> "S"
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR -> "A"
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE -> "U"
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.VEHICLE -> "V"
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.INSTALLATION -> "I"
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.LAND_FORMATION -> "L"
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT -> "R"
+        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SONOBUOY -> "B"
+        else -> "S"
     }
 
     /** 新 IdNum（桌面版：Domain 首字母 + 递增序号） */
@@ -467,6 +486,37 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             toast("已创建护航队：1 指挥舰 + $escortCount 商船")
         }
     }
+
+    /**
+     * 编队操作（R6：桌面版 Formations）。
+     */
+    /** 编队移动准备（DoPrepare）：为编队成员生成移动前轨迹点 */
+    fun formationPrepare(formationName: String) {
+        file?.let { f ->
+            val n = com.simplot.android.domain.engine.FormationEngine.prepare(f.units, formationName)
+            revision++
+            toast("编队 $formationName 准备：$n 个成员记录位置")
+        }
+    }
+
+    /** 编队移动撤销（DoCancel）：恢复成员到移动前位置 */
+    fun formationCancel(formationName: String) {
+        file?.let { f ->
+            val n = com.simplot.android.domain.engine.FormationEngine.cancel(f.units, formationName)
+            revision++
+            toast("编队 $formationName 撤销：$n 个成员恢复")
+        }
+    }
+
+    /** 把单位移出编队（RemoveUnitFromFormation） */
+    fun removeFromFormation(unit: SimUnit) {
+        com.simplot.android.domain.engine.FormationEngine.removeFromFormation(unit)
+        revision++
+        toast("${unit.name} 已移出编队")
+    }
+
+    /** 场景编队名列表 */
+    fun formationNames(): List<String> = file?.let { com.simplot.android.domain.engine.FormationEngine.formationNames(it) } ?: emptyList()
 
     /**
      * 新位置计算（P2 恢复，桌面版 ContainerNewPosition.PushCalcPosition）：
