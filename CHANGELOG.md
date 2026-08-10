@@ -5,6 +5,16 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.7] - 2026-08-10
+
+架构重设计第八轮：场景 I/O UseCase 层（ViewModel 继续瘦身）。
+
+### 新增
+- **ScenarioUseCases**：场景加载/保存三文件/自动存档/Setup 抽为独立 UseCase（依赖注入 Repository），GameViewModel 的 loadScenario/saveThreeFilesTo/autoSave/saveSetup 全部委托 UseCase
+
+### 测试
+- 144 测试全绿（本轮为重构，无新增用例；行为不变）
+
 ## [0.4.6] - 2026-08-10
 
 架构重设计第七轮：Misc 标注对象 + 被动方位 + 颜色配置。

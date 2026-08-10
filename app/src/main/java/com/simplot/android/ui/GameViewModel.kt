@@ -37,6 +37,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repo = ScenarioRepository(application)
     private val settingsRepo = com.simplot.android.data.repo.SettingsRepository(application)
+    private val scenarioUseCases = com.simplot.android.domain.usecase.ScenarioUseCases(application)
 
     // ---- 视口/地图（放 ViewModel：跨配置旋转保留视野与已加载地图） ----
     val camera = Camera()
@@ -138,7 +139,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun loadScenario(uri: Uri) {
         currentUri = uri
         try {
-            val loaded = repo.load(uri)
+            val loaded = scenarioUseCases.load(uri).getOrElse { throw it }
             applyLoaded(loaded)
             loaded.scenario.mapFileName.takeIf { it.isNotBlank() }?.let { mapName ->
                 autoLoadMap(mapName, uri)
@@ -252,10 +253,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         try {
-            val blueView = FogOfWar.applyPerspective(current, "Blue")
-            val redView = FogOfWar.applyPerspective(current, "Red")
-            val parent = repo.parentTreeUri(targetUri)
-            val saved = repo.saveTo(targetUri, parent, current, blueView, redView)
+            val saved = scenarioUseCases.saveThreeFiles(targetUri, current).getOrElse { throw it }
             toast(if (saved) "已保存：Referee json + Blue.SpScn + Red.SpScn" else "已保存 Referee json")
         } catch (e: Exception) {
             toast("保存失败：${e.message}")
@@ -291,7 +289,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val currentUri = currentUri ?: return
         try {
             val turnNo = f.turns.size + 1
-            repo.saveAuto(currentUri, f, turnNo)
+            scenarioUseCases.saveAuto(currentUri, f, turnNo)
         } catch (e: Exception) {
             // 自动存档失败不阻塞推演
         }
@@ -301,7 +299,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun saveSetup(target: Uri) {
         val f = file ?: run { toast("请先打开一个场景"); return }
         try {
-            if (repo.saveSetup(target, f)) toast("已保存 Setup 文件") else toast("保存 Setup 失败")
+            if (scenarioUseCases.saveSetup(target, f)) toast("已保存 Setup 文件") else toast("保存 Setup 失败")
         } catch (e: Exception) {
             toast("保存 Setup 失败：${e.message}")
         }
