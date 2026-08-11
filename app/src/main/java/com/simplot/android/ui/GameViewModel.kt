@@ -65,8 +65,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var editWaypointsUnit by mutableStateOf<SimUnit?>(null)
     /** 新建单位弹窗开关（P1：桌面版各类型新建窗口入口） */
     var showNewUnit by mutableStateOf(false)
-    /** 新位置计算器开关（P2 恢复：桌面版 ContainerNewPosition） */
-    var showNewPosition by mutableStateOf(false)
     /** 护航队创建弹窗开关（P2 恢复：桌面版 WindowConvoy） */
     var showConvoy by mutableStateOf(false)
 
@@ -557,20 +555,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 场景编队名列表 */
     fun formationNames(): List<String> = file?.let { com.simplot.android.domain.engine.FormationEngine.formationNames(it) } ?: emptyList()
-
-    /**
-     * 新位置计算（P2 恢复，桌面版 ContainerNewPosition.PushCalcPosition）：
-     * 参考单位 + 方位角 + 距离 → 新坐标，toast 显示。
-     */
-    fun calcNewPosition(refId: String, bearingDeg: Double, distNm: Double) {
-        val f = file ?: return
-        val ref = f.units.firstOrNull { it.idNum == refId } ?: run {
-            toast("请选择参考单位")
-            return
-        }
-        val (nx, ny) = com.simplot.android.domain.engine.CalcEngine.newPosition(ref.x, ref.y, bearingDeg, distNm)
-        toast("${ref.name}：方位 $bearingDeg° 距离 $distNm nmi\nX=$nx Y=$ny")
-    }
 
     /** 测量完成回调：记录测量线（不自动退出测量模式，可连续画多条对照；退出由按钮/选中单位触发） */
     fun onMeasureComplete(start: Pair<Long, Long>, end: Pair<Long, Long>) {

@@ -39,7 +39,10 @@ import com.simplot.android.domain.registry.UnitTypeRegistry
 @Composable
 fun NewUnitDialog(
     onDismiss: () -> kotlin.Unit,
-    onCreate: (domain: UnitTypeRegistry.Domain, name: String, unitType: String, unitClass: String, side: String, x: Long, y: Long) -> kotlin.Unit
+    onCreate: (domain: UnitTypeRegistry.Domain, name: String, unitType: String, unitClass: String, side: String, x: Long, y: Long) -> kotlin.Unit,
+    // 问题2修复：默认坐标 = 当前视野中心（新建单位不再落在 (0,0) 视野外）
+    defaultX: Long = 0,
+    defaultY: Long = 0
 ) {
     var domain by remember { mutableStateOf(UnitTypeRegistry.Domain.SURFACE) }
     var domainExpanded by remember { mutableStateOf(false) }
@@ -49,8 +52,8 @@ fun NewUnitDialog(
     var unitClass by remember { mutableStateOf("") }
     var side by remember { mutableStateOf("Blue") }
     var sideExpanded by remember { mutableStateOf(false) }
-    var xText by remember { mutableStateOf("0") }
-    var yText by remember { mutableStateOf("0") }
+    var xText by remember { mutableStateOf(defaultX.toString()) }
+    var yText by remember { mutableStateOf(defaultY.toString()) }
 
     val domainOptions = UnitTypeRegistry.Domain.entries.filter { it != UnitTypeRegistry.Domain.UNKNOWN }
     val typeOptions = UnitTypeRegistry.typesOf(domain)

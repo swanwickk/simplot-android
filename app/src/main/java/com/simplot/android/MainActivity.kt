@@ -40,7 +40,6 @@ import com.simplot.android.ui.GameViewModel
 import com.simplot.android.ui.components.ArcEditorDialog
 import com.simplot.android.ui.components.ConvoyDialog
 import com.simplot.android.ui.components.FormationDialog
-import com.simplot.android.ui.components.NewPositionDialog
 import com.simplot.android.ui.components.NewUnitDialog
 import com.simplot.android.ui.components.ReplayBar
 import com.simplot.android.ui.components.SceneCanvas
@@ -240,20 +239,14 @@ class MainActivity : ComponentActivity() {
         // 新建单位（P1：桌面版各类型 NewUnit 窗口）
         if (vm.showNewUnit) {
             NewUnitDialog(
+                // 问题2修复：默认位置 = 当前视野中心（避免新建单位落在 (0,0) 视野外不可见/不可编辑）
+                defaultX = vm.camera.centerWorldX,
+                defaultY = vm.camera.centerWorldY,
                 onDismiss = { vm.showNewUnit = false },
                 onCreate = { domain, name, unitType, unitClass, side, x, y ->
                     vm.createNewUnit(domain, name, unitType, unitClass, side, x, y)
                     vm.showNewUnit = false
                 }
-            )
-        }
-
-        // 新位置计算器（P2 恢复：桌面版 ContainerNewPosition）
-        if (vm.showNewPosition) {
-            NewPositionDialog(
-                units = vm.file?.units ?: emptyList(),
-                onDismiss = { vm.showNewPosition = false },
-                onCalc = { refId, bearing, dist -> vm.calcNewPosition(refId, bearing, dist); vm.showNewPosition = false }
             )
         }
 
@@ -318,12 +311,8 @@ class MainActivity : ComponentActivity() {
             saveFile.launch("$defaultName.json")
         }) { Text("保存") }
         Button(onClick = { pickMap.launch(arrayOf("image/*")) }) { Text("地图") }
-        // P2 恢复：新建单位 / 新位置计算器 / 护航队
+        // P2 恢复：新建单位 / 护航队 / 编队
         Button(onClick = { if (vm.file != null) vm.showNewUnit = true else vm.toast("请先打开一个场景") }) { Text("新单位") }
-        Button(onClick = {
-            if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可作参考"); return@Button }
-            vm.showNewPosition = true
-        }) { Text("新位置") }
         Button(onClick = { if (vm.file != null) vm.showConvoy = true else vm.toast("请先打开一个场景") }) { Text("护航队") }
         Button(onClick = { if (vm.file != null) vm.showFormation = true else vm.toast("请先打开一个场景") }) { Text("编队") }
         Button(onClick = {

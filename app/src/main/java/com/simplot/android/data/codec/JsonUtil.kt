@@ -30,6 +30,10 @@ object JsonUtil {
     /**
      * 桌面版空轨迹的表示是 {}（空对象）而非 []（空数组）。
      * 实测 Iron Bottom Sound：未移动单位 "PastWaypointArray": {}。
+     * 兼容两种航路点元素格式（用户 Red.SpScn 实测）：
+     * 1. 对象数组 [{Name,X,Y,...}]（官方 2.3.9）
+     * 2. 嵌套 12 字段扁平数组 [[Name,X,Y,Speed,Course,AltitudeDepth,
+     *    AssignedAltDepth,Ascent,Descent,Number,IsTurnTime,PositionTime], ...]
      */
     private object WaypointListAdapter : JsonSerializer<MutableList<Waypoint>>, JsonDeserializer<MutableList<Waypoint>> {
         override fun serialize(src: MutableList<Waypoint>, typeOfSrc: Type, context: JsonSerializationContext): JsonElement {
@@ -47,10 +51,37 @@ object JsonUtil {
             if (json.isJsonArray) {
                 val arr = json.asJsonArray
                 val list = mutableListOf<Waypoint>()
-                for (el in arr) list.add(context.deserialize(el, Waypoint::class.java))
+                for (el in arr) {
+                    when {
+                        el.isJsonObject -> list.add(context.deserialize(el, Waypoint::class.java))
+                        el.isJsonArray -> list.add(waypointFromArray(el.asJsonArray))  // 桌面扁平数组格式
+                        else -> throw JsonParseException("Unexpected waypoint element: $el")
+                    }
+                }
                 return list
             }
             throw JsonParseException("Unexpected PastWaypointArray: ${json}")
+        }
+
+        /** 12 字段扁平数组 → Waypoint（字段序 = Waypoint 模型声明序） */
+        private fun waypointFromArray(arr: JsonArray): Waypoint {
+            fun str(i: Int) = arr.get(i).takeIf { !it.isJsonNull && it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString ?: ""
+            fun num(i: Int) = arr.get(i).takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asLong ?: 0L
+            fun bool(i: Int) = arr.get(i).takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean ?: false
+            return Waypoint(
+                name = str(0),
+                x = num(1),
+                y = num(2),
+                speed = num(3).toInt(),
+                course = num(4).toInt(),
+                altitudeDepth = num(5).toInt(),
+                assignedAltDepth = num(6).toInt(),
+                ascent = num(7).toInt(),
+                descent = num(8).toInt(),
+                number = num(9).toInt(),
+                isTurnTime = bool(10),
+                positionTime = str(11)
+            )
         }
     }
 

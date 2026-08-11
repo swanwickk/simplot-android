@@ -5,6 +5,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.5.1] - 2026-08-11
+
+真机反馈三项修复（桌面 Red.SpScn 读取报错 / 新位置按钮 / 新单位位置）。
+
+### 修复
+- **桌面 Red.SpScn 读取报错（用户上传复现）**：桌面版航路点存在第二种序列化格式——嵌套 12 字段扁平数组 `[[Name,X,Y,Speed,Course,AltitudeDepth,AssignedAltDepth,Ascent,Descent,Number,IsTurnTime,PositionTime],...]`（官方 2.3.9 为对象数组）。`WaypointListAdapter` 新增该格式解析，两种格式均兼容
+- **移除右上角「新位置」按钮**：与桌面同名功能（ContainerNewPosition 单位编辑面板内）不符，删除入口与 NewPositionDialog
+- **新建单位默认位置 = 当前视野中心**：此前固定 (0,0)，若视野不在原点则新单位不可见/无法编辑；`NewUnitDialog` 新增 `defaultX/defaultY` 参数，打开时取相机中心
+
+### 测试
+- 新增 MediterraneanRedLoadTest（用户 Red.SpScn 加载回归：131 单位 / 29 Turns / 嵌套航路点解析）——**149 测试全绿**
+
 ## [0.5.0] - 2026-08-11
 
 桌面版对齐大版本（审阅 + 用户 18 项决策 + 原始存档对拍后实施）。
