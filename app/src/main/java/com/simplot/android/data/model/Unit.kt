@@ -45,11 +45,11 @@ data class Unit(
     @SerializedName("TextTags") var textTags: TextTags = TextTags(),
     @SerializedName("SensorArray") var sensorArray: MutableList<Sensor>? = null,       // 传感器射程弧
     @SerializedName("WeaponArray") var weaponArray: MutableList<Weapon>? = null,       // 武器射程弧
-    @SerializedName("Altitude") var altitude: Int? = null,             // 飞机高度（米，原样存取）
+    @SerializedName("Altitude") var altitude: Int? = null,             // 飞机高度（米 ×1000 定点，桌面版实测 red 存档：3000000=3000米）
     @SerializedName("AssignedAltitude") var assignedAltitude: Int? = null,
-    @SerializedName("Climb") var climb: Int? = null,                   // 爬升速率（米/回合？桌面版运行时 /180 得每秒变化）
+    @SerializedName("Climb") var climb: Int? = null,                   // 爬升速率（米/回合，×1000）
     @SerializedName("Descend") var descend: Int? = null,
-    @SerializedName("Depth") var depth: Int? = null,                // 潜艇深度（米，原样存取）
+    @SerializedName("Depth") var depth: Int? = null,                // 潜艇深度（米 ×1000 定点）
     @SerializedName("AssignedDepth") var assignedDepth: Int? = null,
     @SerializedName("Ascend") var ascend: Int? = null,
     @SerializedName("DescRate") var descRate: Int? = null,
@@ -68,11 +68,21 @@ data class Unit(
     /** 瞬态：编队 prepare 时的未来航路点备份（E12：cancel 恢复用，不落盘） */
     @Transient var formationWaypointBackup: MutableList<Waypoint>? = null
 ) {
-    // ---- 便捷换算（节/度；高度深度已是米，直接返回） ----
+    // ---- 便捷换算（节/度；高度/深度为 ×1000 定点，转米显示） ----
     fun speedKnots(): Double = speed / 1000.0
     fun courseDeg(): Double = course / 1000.0
-    fun altitudeMeters(): Int? = altitude
-    fun depthMeters(): Int? = depth
+
+    /** 高度（米）：存档值 ÷1000（×1000 定点，桌面版实测） */
+    fun altitudeMeters(): Int? = altitude?.div(1000)
+
+    /** 深度（米）：存档值 ÷1000 */
+    fun depthMeters(): Int? = depth?.div(1000)
+
+    /** 设置高度（米 → ×1000 存） */
+    fun setAltitude(meters: Int) { altitude = meters * 1000 }
+
+    /** 设置深度（米 → ×1000 存） */
+    fun setDepth(meters: Int) { depth = meters * 1000 }
 
     fun setSpeed(knots: Double) { speed = (knots * 1000).toInt() }
     fun setCourse(deg: Double) { course = ((deg % 360) * 1000).toInt() }
@@ -95,10 +105,10 @@ data class Waypoint(
     @SerializedName("Y") var y: Long = 0,
     @SerializedName("Speed") var speed: Int = 0,            // ×1000
     @SerializedName("Course") var course: Int = 0,           // ×1000
-    @SerializedName("AltitudeDepth") var altitudeDepth: Int = 0,   // 米（原样存取，无定点）
-    @SerializedName("AssignedAltDepth") var assignedAltDepth: Int = 0,  // 米（原样存取）
-    @SerializedName("Ascent") var ascent: Int = 0,          // 爬升速率（米/回合）
-    @SerializedName("Descent") var descent: Int = 0,        // 下降速率（米/回合）
+    @SerializedName("AltitudeDepth") var altitudeDepth: Int = 0,   // 米 ×1000 定点（red 存档实测 3000000=3000m）
+    @SerializedName("AssignedAltDepth") var assignedAltDepth: Int = 0,  // 米 ×1000 定点
+    @SerializedName("Ascent") var ascent: Int = 0,          // 爬升速率（米/回合 ×1000）
+    @SerializedName("Descent") var descent: Int = 0,        // 下降速率（米/回合 ×1000）
     @SerializedName("Number") var number: Int = 1,
     @SerializedName("IsTurnTime") var isTurnTime: Boolean = true,
     @SerializedName("PositionTime") var positionTime: String = ""

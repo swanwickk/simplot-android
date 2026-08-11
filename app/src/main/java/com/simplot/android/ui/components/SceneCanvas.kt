@@ -368,8 +368,8 @@ private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, s
     if (tag.tagCourseSpeed) {
         parts.add("Course ${u.courseDeg().toInt()}°  Speed ${u.speedKnots().toInt()} kts")
     }
-    if (tag.tagAltitude && u.altitude != null) parts.add("Alt ${u.altitude} m")
-    if (tag.tagDepth && u.depth != null) parts.add("Depth ${u.depth} m")
+    if (tag.tagAltitude && u.altitude != null) parts.add("Alt ${u.altitudeMeters()} m")
+    if (tag.tagDepth && u.depth != null) parts.add("Depth ${u.depthMeters()} m")
     if (tag.tagCallsign && u.name.isNotEmpty()) parts.add(u.name)
     if (tag.additionalText.isNotBlank()) parts.add(tag.additionalText)
     val text = parts.joinToString("  ")

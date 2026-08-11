@@ -5,6 +5,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.5.2] - 2026-08-11
+
+空中单位显示修复（用户以 Red 存档反馈）。
+
+### 修复
+- **飞机高度/深度 ×1000 定点修正**：桌面版 Altitude/Depth/AssignedAltDepth/速率均为「米 ×1000」定点（Red 存档实测 `3000000`=3000 米）。此前误按原样米读取导致飞机显示 3000000 米；新增 `altitudeMeters()/depthMeters()/setAltitude()/setDepth()` 换算，标签/编辑面板/航路点编辑器/CSV 全部按米显示、×1000 落盘。引擎高度变化同步按定点（上限 180 米=180000）
+- **飞机/潜艇/导弹 CWS 精灵图标**：飞机不再画纯色三角形——按桌面版 CwsSymbols 从精灵图裁剪：固定翼飞机 row2 col16、直升机 row2 col19、潜艇 row2 col12、导弹 row0 col21（图标格位经精灵图像素实测确认）
+
+### 测试
+- MediterraneanRedLoadTest 新增高度定点回归（A061 3000000→3000m / A120 0m / 水面无 Altitude）
+- EngineTest 高度/深度用例全部改 ×1000 定点语义——**150 测试全绿**
+
 ## [0.5.1] - 2026-08-11
 
 真机反馈三项修复（桌面 Red.SpScn 读取报错 / 新位置按钮 / 新单位位置）。

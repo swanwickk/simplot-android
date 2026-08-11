@@ -80,6 +80,19 @@ object UnitRenderer {
         "CL" to (1 to 3), "CA" to (1 to 3), "CG" to (1 to 3)   // 别名：CL/CA/CG → CC 格（导弹巡洋舰同格）
     )
 
+    /**
+     * 空中/水下单位精灵图格位（row2/row0，精灵图实测：
+     * row2 col16/19/22 = 飞机（机头+双翼轮廓），row2 col12 = 潜艇（鱼形+指挥塔），
+     * row0 col21 = 导弹（黄色弹体+两侧 A））。
+     * 桌面版 CwsSymbols：飞机/潜艇同样用类型精灵图，非纯色三角形。
+     */
+    private val CWS_DOMAIN_CELLS = mapOf(
+        "AIRCRAFT" to (2 to 15),   // row2 col16（0-based）固定翼飞机
+        "HELICOPTER" to (2 to 18), // row2 col19（0-based）直升机
+        "SUBMARINE" to (2 to 11),  // row2 col12（0-based）潜艇
+        "MISSILE" to (0 to 20)     // row0 col21（0-based）导弹
+    )
+
     private const val SPRITE_ASSET_DIR = "symbols"
 
     private const val TAG = "UnitRenderer"
@@ -131,14 +144,11 @@ object UnitRenderer {
 
     /**
      * 绘制 CWS 类型独特图标：从精灵图裁剪 65x65 格 → 目标 (sx-sizePx/2, sy-sizePx/2, sizePx, sizePx)。
-     * 反馈⑮（用户真机）：航母 CV 在北约 APP-6/CWS 标准中为"蓝底圆 + 黑色 CV 字母"，
-     * 而原版精灵图 row1 无 CV 字母格（Carrier 格为剪影图形）→ CV 类改为代码绘制标准符号：
-     * 填充圆底 + 黑色斜体 CV 文字（与其他 BB/CG/DD 字母格视觉一致）。
-     * @return true=已绘制；false=类型未命中映射或精灵图加载失败（调用方画矢量兜底）
+     * 支持：水面舰（CWS_CLASS_CELLS）、飞机/直升机/潜艇/导弹（CWS_DOMAIN_CELLS）。
+     * @return true=已绘制；false=未命中映射或精灵图加载失败（调用方画矢量兜底）
      */
     private fun drawCwsIcon(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float): Boolean {
-        val cls = u.unitClass.trim().uppercase()
-        val cell = CWS_CLASS_CELLS[cls] ?: return false
+        val cell = cwsCellOf(u) ?: return false
         val bmp = loadSprite(u.side) ?: return false
         val g = CWS_GRID.toInt()
         val src = Rect(cell.second * g, cell.first * g, cell.second * g + g, cell.first * g + g)
@@ -147,6 +157,22 @@ object UnitRenderer {
         val filter = Paint(Paint.FILTER_BITMAP_FLAG)
         canvas.drawBitmap(bmp, src, dst, filter)
         return true
+    }
+
+    /** CWS 精灵图格位解析：水面舰按 class，飞机/直升机/潜艇/导弹按 domain */
+    private fun cwsCellOf(u: Unit): Pair<Int, Int>? {
+        // 参考点不走精灵图（虚线圆/菱形单独绘制）
+        val cls = u.unitClass.trim().uppercase()
+        CWS_CLASS_CELLS[cls]?.let { return it }
+        // 空中/水下单位（桌面版 CwsSymbols 有独立图标，不是纯色三角形）
+        val type = u.unitType.lowercase()
+        return when {
+            u.isAircraft() && (type.contains("helo") || type.contains("helicopter")) -> CWS_DOMAIN_CELLS["HELICOPTER"]
+            u.isAircraft() && (type.contains("missile") || type.contains("torpedo")) -> CWS_DOMAIN_CELLS["MISSILE"]
+            u.isAircraft() -> CWS_DOMAIN_CELLS["AIRCRAFT"]
+            u.isSubmarine() -> CWS_DOMAIN_CELLS["SUBMARINE"]
+            else -> null
+        }
     }
 
     fun draw(canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false, symbolStyle: SymbolStyle = SymbolStyle.NTDS, showSpeedLeader: Boolean = true) {

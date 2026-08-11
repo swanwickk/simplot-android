@@ -210,8 +210,8 @@ fun UnitEditSheet(
                 unit.setSpeed(speed.toDouble().coerceAtLeast(0.0))
                 xText.toLongOrNull()?.let { unit.x = it }    // R-P2：X/Y 应用
                 yText.toLongOrNull()?.let { unit.y = it }
-                if (unit.isAircraft() && alt.isNotBlank()) unit.altitude = alt.toInt()
-                if ((unit.isSubmarine() || isSonobuoy) && depth.isNotBlank()) unit.depth = depth.toInt()
+                if (unit.isAircraft() && alt.isNotBlank()) unit.setAltitude(alt.toInt())
+                if ((unit.isSubmarine() || isSonobuoy) && depth.isNotBlank()) unit.setDepth(depth.toInt())
                 unit.textTags.tagName = showName
                 unit.textTags.tagCourseSpeed = showCS
                 unit.showSunk = sunk

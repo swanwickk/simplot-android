@@ -588,7 +588,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 val distNm = CoordUtil.distanceNm(ref.x, ref.y, u.x, u.y)
                 val distYards = distNm * CoordUtil.YARDS_PER_NMI
                 val distMeters = distNm * 1852.0
-                val altDepth = u.altitude ?: u.depth ?: 0
+                val altDepth = u.altitudeMeters() ?: u.depthMeters() ?: 0
                 sb.append("${u.trackNumber},")
                 sb.append("${u.x},${u.y},")
                 sb.append("${String.format("%.0f", u.courseDeg())},${String.format("%.0f", u.speedKnots())},$altDepth,")

@@ -144,10 +144,11 @@ object MovementEngine {
      */
     private fun applyAltitudeDepth(u: Unit) {
         val wp = u.futureWaypointArray.firstOrNull() ?: return
-        val maxChange = 180L   // E3：桌面版单回合最大变化 180 常量
+        // E3：桌面版单回合最大变化 180 常量（米）；存档为 ×1000 定点 → 180000
+        val maxChange = 180_000L
         if (u.altitude != null) {
-            val target = wp.assignedAltDepth.toLong()   // 米
-            val cur = u.altitude!!.toLong()             // 米
+            val target = wp.assignedAltDepth.toLong()   // 米 ×1000
+            val cur = u.altitude!!.toLong()             // 米 ×1000
             val rate = if (target > cur) wp.ascent.toLong() else wp.descent.toLong()
             if (rate > 0) {
                 val step = minOf(rate, maxChange, kotlin.math.abs(target - cur))
@@ -159,8 +160,8 @@ object MovementEngine {
             }
         }
         if (u.depth != null) {
-            val target = wp.assignedAltDepth.toLong()   // 米
-            val cur = u.depth!!.toLong()                // 米
+            val target = wp.assignedAltDepth.toLong()   // 米 ×1000
+            val cur = u.depth!!.toLong()                // 米 ×1000
             val rate = if (target > cur) wp.descent.toLong() else wp.ascent.toLong()
             if (rate > 0) {
                 val step = minOf(rate, maxChange, kotlin.math.abs(target - cur))

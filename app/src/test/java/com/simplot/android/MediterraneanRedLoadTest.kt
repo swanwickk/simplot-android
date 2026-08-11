@@ -32,4 +32,19 @@ class MediterraneanRedLoadTest {
         assertTrue(u.perceptionArray != null)
         assertTrue(u.sensorArray != null)
     }
+
+    @Test
+    fun `aircraft altitude is meters times 1000`() {
+        // 2026-08-11 修正：桌面 Altitude = 米 ×1000 定点（red 实测 3000000=3000m）
+        val f = File("src/test/resources/scenarios/Mediterranean_Red.spScn")
+        val loaded: ScenarioFile = JsonUtil.fromJson(SpScnCodec.fromScnFileBytes(f.readBytes()))
+        val a061 = loaded.units.first { it.idNum == "A061" }
+        assertEquals(3000000, a061.altitude)        // 存档原始值（×1000）
+        assertEquals(3000, a061.altitudeMeters())   // 显示换算米
+        val a120 = loaded.units.first { it.idNum == "A120" }
+        assertEquals(0, a120.altitudeMeters())      // 0 米（未升空）
+        // 水面单位无 Altitude
+        val s = loaded.units.first { it.idNum == "S001" }
+        assertEquals(null, s.altitude)
+    }
 }

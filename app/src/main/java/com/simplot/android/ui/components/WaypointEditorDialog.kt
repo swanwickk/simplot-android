@@ -114,9 +114,11 @@ private fun WaypointRow(
     var yText by remember { mutableStateOf(wp.y.toString()) }
     var speedText by remember { mutableStateOf((wp.speed / 1000.0).toString()) }
     var courseText by remember { mutableStateOf((wp.course / 1000.0).toString()) }
-    var altText by remember { mutableStateOf(wp.assignedAltDepth.toString()) }
+    // ×1000 定点：编辑按米，落盘 ×1000
+    var altText by remember { mutableStateOf((wp.assignedAltDepth / 1000).toString()) }
 
     fun commit() {
+        val altM = altText.toIntOrNull()
         onUpdate(
             Waypoint(
                 name = wp.name,
@@ -124,8 +126,8 @@ private fun WaypointRow(
                 y = yText.toLongOrNull() ?: wp.y,
                 speed = ((speedText.toDoubleOrNull() ?: wp.speed / 1000.0) * 1000).toInt(),
                 course = ((courseText.toDoubleOrNull() ?: wp.course / 1000.0) * 1000).toInt(),
-                altitudeDepth = altText.toIntOrNull() ?: wp.altitudeDepth,
-                assignedAltDepth = altText.toIntOrNull() ?: wp.assignedAltDepth,
+                altitudeDepth = (altM ?: wp.altitudeDepth / 1000) * 1000,
+                assignedAltDepth = (altM ?: wp.assignedAltDepth / 1000) * 1000,
                 ascent = wp.ascent, descent = wp.descent,
                 number = wp.number, isTurnTime = wp.isTurnTime,
                 positionTime = wp.positionTime

@@ -306,20 +306,21 @@ class ReplayTest {
         assertEquals(0L, tl[0].positions["S001"]!!.x)
     }
 
-    // ============ 高度/深度引擎（桌面版 ChangeAltitude/ChangeDepth，A1 修复） ============
+    // ============ 高度/深度引擎（桌面版 ChangeAltitude/ChangeDepth）============
+    // 2026-08-11 修正：Altitude/Depth/AssignedAltDepth/速率均为 ×1000 定点（red 存档实测 3000000=3000m）
 
-    /** 飞机：指定高度（米）+ 未来航路点目标高度/速率 */
-    private fun airUnit(id: String, altitudeM: Int, wpTargetM: Int, ascent: Int = 0, descent: Int = 0): Unit {
+    /** 飞机：指定高度（米）+ 未来航路点目标高度/速率（米）——内部 ×1000 */
+    private fun airUnit(id: String, altitudeM: Int, wpTargetM: Int, ascentM: Int = 0, descentM: Int = 0): Unit {
         return Unit().apply {
             this.idNum = id
             side = "Blue"
             name = id
-            this.altitude = altitudeM
-            if (wpTargetM != 0 || ascent != 0 || descent != 0) {
+            setAltitude(altitudeM)
+            if (wpTargetM != 0 || ascentM != 0 || descentM != 0) {
                 futureWaypointArray.add(
                     com.simplot.android.data.model.Waypoint(
-                        x = 0, y = 0, altitudeDepth = altitudeM,
-                        assignedAltDepth = wpTargetM, ascent = ascent, descent = descent
+                        x = 0, y = 0, altitudeDepth = altitudeM * 1000,
+                        assignedAltDepth = wpTargetM * 1000, ascent = ascentM * 1000, descent = descentM * 1000
                     )
                 )
             }
@@ -327,17 +328,17 @@ class ReplayTest {
     }
 
     /** 潜艇：指定深度（米） */
-    private fun subUnit(id: String, depthM: Int, wpTargetM: Int, ascent: Int = 0, descent: Int = 0): Unit {
+    private fun subUnit(id: String, depthM: Int, wpTargetM: Int, ascentM: Int = 0, descentM: Int = 0): Unit {
         return Unit().apply {
             this.idNum = id
             side = "Blue"
             name = id
-            this.depth = depthM
-            if (wpTargetM != 0 || ascent != 0 || descent != 0) {
+            setDepth(depthM)
+            if (wpTargetM != 0 || ascentM != 0 || descentM != 0) {
                 futureWaypointArray.add(
                     com.simplot.android.data.model.Waypoint(
-                        x = 0, y = 0, altitudeDepth = depthM,
-                        assignedAltDepth = wpTargetM, ascent = ascent, descent = descent
+                        x = 0, y = 0, altitudeDepth = depthM * 1000,
+                        assignedAltDepth = wpTargetM * 1000, ascent = ascentM * 1000, descent = descentM * 1000
                     )
                 )
             }
@@ -347,27 +348,27 @@ class ReplayTest {
     @Test
     fun `altitude climbs toward waypoint target at ascent rate`() {
         // 当前 1000 米 → 目标 3000 米，爬升速率 500 米/回合
-        // E3：单回合变化上限 180 → 1000+180=1180
-        val f = scenario(listOf(airUnit("A001", 1000, 3000, ascent = 500)))
+        // E3：单回合变化上限 180 米 → 1000+180=1180
+        val f = scenario(listOf(airUnit("A001", 1000, 3000, ascentM = 500)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(1180, f.units[0].altitude)
+        assertEquals(1180, f.units[0].altitudeMeters())
     }
 
     @Test
     fun `altitude descends toward waypoint target at descent rate`() {
         // 当前 3000 米 → 目标 1000 米，下降速率 800 米/回合
-        // E3：单回合变化上限 180 → 3000−180=2820
-        val f = scenario(listOf(airUnit("A001", 3000, 1000, descent = 800)))
+        // E3：单回合变化上限 180 米 → 3000−180=2820
+        val f = scenario(listOf(airUnit("A001", 3000, 1000, descentM = 800)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(2820, f.units[0].altitude)
+        assertEquals(2820, f.units[0].altitudeMeters())
     }
 
     @Test
     fun `altitude does not overshoot target`() {
-        // 当前 1000 → 目标 1200，速率 500 → E3 单回合上限 180 → 1000+180=1180（未超目标）
-        val f = scenario(listOf(airUnit("A001", 1000, 1200, ascent = 500)))
+        // 当前 1000 → 目标 1200，速率 500 米/回合 → E3 单回合上限 180 → 1180（未超目标）
+        val f = scenario(listOf(airUnit("A001", 1000, 1200, ascentM = 500)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(1180, f.units[0].altitude)
+        assertEquals(1180, f.units[0].altitudeMeters())
     }
 
     @Test
@@ -375,27 +376,28 @@ class ReplayTest {
         // 速率为 0 → 不调整（与桌面版 Ascent/Descent 语义一致）
         val f = scenario(listOf(airUnit("A001", 1000, 3000)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(1000, f.units[0].altitude)
+        assertEquals(1000, f.units[0].altitudeMeters())
     }
 
     @Test
-    fun `altitude is plain meters not scaled`() {
-        // A1 修复核心：Altitude 存档单位 = 实际米（无 ×1000 定点）
-        val u = Unit().apply { altitude = 10000; depth = 200 }
-        assertEquals(10000, u.altitudeMeters())
+    fun `altitude is meters times 1000 fixed point`() {
+        // 2026-08-11 修正：Altitude 存档 = 米 ×1000 定点（red 存档实测 3000000=3000m）
+        val u = Unit().apply { setAltitude(3000); setDepth(200) }
+        assertEquals(3000000, u.altitude)
+        assertEquals(3000, u.altitudeMeters())
         assertEquals(200, u.depthMeters())
-        // 序列化后应保持原值（无 ×1000）
+        // 序列化保持 ×1000（与桌面字节一致）
         val json = com.simplot.android.data.codec.JsonUtil.gson.toJson(u)
-        assertTrue(json.contains("\"Altitude\":10000"))
-        assertTrue(json.contains("\"Depth\":200"))
+        assertTrue(json.contains("\"Altitude\":3000000"))
+        assertTrue(json.contains("\"Depth\":200000"))
     }
 
     @Test
     fun `depth ascends toward waypoint target`() {
         // 当前 300 米 → 目标 100 米（上浮），上浮速率 100 米/回合
-        val f = scenario(listOf(subUnit("U001", 300, 100, ascent = 100)))
+        val f = scenario(listOf(subUnit("U001", 300, 100, ascentM = 100)))
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(200, f.units[0].depth)
+        assertEquals(200, f.units[0].depthMeters())
     }
 
     // ============ 编队移动（桌面版 MoveCompassFormation，A2 修复） ============
