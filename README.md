@@ -32,13 +32,48 @@ app/src/main/java/com/simplot/android/
 
 ## 构建
 
-环境要求：JDK 17+、Android SDK（compileSdk 35）。
+### 环境要求（已在相对干净的环境实测通过）
+
+| 组件 | 版本 | 说明 |
+|---|---|---|
+| JDK | **21**（17+ 亦可，需支持 Gradle 8.9） | 构建前设置 `JAVA_HOME` |
+| Android SDK | compileSdk **35**（platforms/android-35） | `sdk.dir` 指向 SDK 根目录 |
+| Gradle | 8.9（wrapper 已内置） | 发行包走华为云镜像 `mirrors.huaweicloud.com`，首次构建自动下载 |
+| 内存 | 推荐 ≥ 2GB 可用 | `gradle.properties` 已按低内存调优（daemon=false、单 worker、Kotlin in-process 编译） |
+
+### 首次构建步骤
 
 ```bash
+# 1. 设置 JDK（若系统默认不是 JDK 17+）
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+export PATH="$JAVA_HOME/bin:$PATH"
+
+# 2. 指向本机 Android SDK（local.properties 不入库，需自行创建）
+#    SDK 需已安装 platforms;android-35 与 build-tools（35.0.0 已实测），且 licenses 已接受
+echo "sdk.dir=/opt/android-sdk" > local.properties   # 替换为实际 SDK 路径
+
+# 3. 构建 debug APK
 ./gradlew assembleDebug
 ```
 
-或用 Android Studio 打开本目录直接运行。
+产出：`app/build/outputs/apk/debug/app-debug.apk`（v0.6.0 实测约 10.4 MB）。
+
+### 运行单元测试
+
+```bash
+./gradlew test
+```
+
+基线：**50 测试类 / 311 用例全绿**（0 failure / 0 error / 0 skip），与 CHANGELOG 声明一致。
+
+### 常见问题
+
+- **`SDK location not found`**：`local.properties` 缺失或 `sdk.dir` 路径不对，按上文第 2 步创建。
+- **`Failed to install the following Android SDK packages` / license 未接受**：运行 `sdkmanager --licenses`（位于 `$ANDROID_HOME/cmdline-tools/latest/bin`）接受许可。
+- **首次构建下载慢**：gradle 发行包已走华为云镜像；依赖仓库为 google() + mavenCentral()，国内网络建议配置代理或镜像。
+- **OOM / 构建被杀**：`gradle.properties` 已按 3.4GB 沙箱调优，若内存更紧张可将 `org.gradle.jvmargs` 中的 `-Xmx1024m` 调低；不要同时开多个 Gradle 进程。
+
+或用 Android Studio 打开本目录直接运行（会自动读取 `local.properties`）。
 
 ## 与桌面版互通
 
