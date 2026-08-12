@@ -9,11 +9,11 @@ import kotlin.jvm.Transient
  * 数值编码（与桌面版一致）：
  * - Speed = 节 × 1000
  * - Course = 度 × 1000（罗盘角 0=北 顺时针）
- * - Altitude = 米（整数，桌面版原样存取，无定点！实测 JsonToUnit 对 Altitude 直接 movsd）
- * - Depth = 米（同上，原样存取）
+ * - Altitude = 米 × 1000（整数定点，桌面版实测 red 存档：3000000=3000米）
+ * - Depth = 米 × 1000（同上，整数定点）
  * - X / Y = 海里 × 100000（整数定点，Y 向北为正）
  * - Range = 海里 × 1（整数，-100000 表示无限制）
- * ⚠️ 高度/深度无 ×1000 定点（此前误写为 ×1000，与桌面版不兼容，已修正）
+ * ⚠️ 高度/深度为 ×1000 定点（与 Speed/Course 同规则；此前的"原样无定点"注释与实现矛盾，已修正注释，实现不变）
  */
 data class Unit(
     @SerializedName("IdNum") var idNum: String = "S001",            // 对象 ID：S=水面 A=飞机 U=潜艇 L=岸上
@@ -87,6 +87,9 @@ data class Unit(
     fun setSpeed(knots: Double) { speed = (knots * 1000).toInt() }
     fun setCourse(deg: Double) { course = ((deg % 360) * 1000).toInt() }
 
+    /** 呼叫号显示值（G21）：独立呼叫号为空时回退单位名称（桌面版呼叫号=Name 语义） */
+    fun callsignOrName(): String = textTags.callsign.ifBlank { name }
+
     // ---- 类型判断 ----
     fun isSubmarine(): Boolean = depth != null
     fun isAircraft(): Boolean = altitude != null
@@ -144,6 +147,14 @@ data class Weapon(
  * 标签显示设置（键序与桌面版一致：
  * TagAltitude, TagCallsign, TagClass, TagCourseSpeed, TagDepth, TagName,
  * TagTrackNum, TagUnitType, AdditionalText）
+ *
+ * G21/tagCallsign 独立呼叫号字段：桌面版 CTextTag 的属性名为 Callsign（反汇编确认），
+ * 但桌面版 TextTags JSON 固定 9 键、无独立呼叫号字符串键（呼叫号 = 单位 Name）。
+ * 为满足"独立呼叫号字段 + 存档互通"（主 agent 决策，批次2-轮2）：
+ * - [callsign] 为瞬态字段（@Transient，Gson 排除、不落盘）→ 序列化保持桌面 9 键
+ *   字节级兼容（不得再恢复 @SerializedName("Callsign") 落盘键）；
+ * - 渲染/UI 呼叫号显示统一走 [Unit.callsignOrName]（空串回退单位 Name），
+ *   与桌面版"呼叫号 = Name"语义一致。
  */
 data class TextTags(
     @SerializedName("TagAltitude") var tagAltitude: Boolean = false,
@@ -154,7 +165,9 @@ data class TextTags(
     @SerializedName("TagName") var tagName: Boolean = false,
     @SerializedName("TagTrackNum") var tagTrackNum: Boolean = false,
     @SerializedName("TagUnitType") var tagUnitType: Boolean = false,
-    @SerializedName("AdditionalText") var additionalText: String = ""
+    @SerializedName("AdditionalText") var additionalText: String = "",
+    /** 独立呼叫号（G21 编辑期字段；瞬态不落盘，空串=用单位 Name 显示，见 [Unit.callsignOrName]） */
+    @Transient var callsign: String = ""
 )
 
 /** 感知数据（裁判视角，迷雾核心） */
@@ -189,3 +202,18 @@ data class PassiveBearing(
     @SerializedName("PositionTimeEnd") var positionTimeEnd: String = "",
     @SerializedName("ShowAsSide") var showAsSide: String = "Unknown"
 )
+
+/**
+ * 平移航路点列表（G32 Relocate：单位整体搬移时，其历史/未来航路点同步平移，
+ * 保持轨迹与移动计划的绝对位置语义，等价桌面版 CanvasMap_MouseDrag → RecalcWaypoints）。
+ *
+ * 顶层纯函数（可 JVM 单测）：就地修改并返回同一列表；dx/dy 为文件单位增量。
+ */
+fun shiftWaypoints(waypoints: MutableList<Waypoint>, dx: Long, dy: Long): MutableList<Waypoint> {
+    if (dx == 0L && dy == 0L) return waypoints
+    for (w in waypoints) {
+        w.x += dx
+        w.y += dy
+    }
+    return waypoints
+}

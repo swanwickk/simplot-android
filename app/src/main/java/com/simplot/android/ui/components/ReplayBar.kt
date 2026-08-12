@@ -26,6 +26,7 @@ import com.simplot.android.engine.ReplayEngine
 /**
  * 回放控制条（对应桌面版 Turn Replay 窗口）：
  * Play（自动播放）/ Pause / Back（上一帧）/ Forward（下一帧）+ 时间滑块。
+ * G07：首帧/末帧跳转（桌面 FirstTurn/LastTurn，R-P3.10 修复）。
  */
 @Composable
 fun ReplayBar(
@@ -58,9 +59,13 @@ fun ReplayBar(
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // G07：首帧跳转（桌面 FirstTurn）
+                Button(onClick = { onFrameChange(0) }, modifier = Modifier.weight(1f)) {
+                    Text("⏮ 首帧")
+                }
                 Button(onClick = { onFrameChange((frameIndex - 1).coerceAtLeast(0)) }, modifier = Modifier.weight(1f)) {
                     Text("◀ 上帧")
                 }
@@ -70,6 +75,16 @@ fun ReplayBar(
                 Button(onClick = { onFrameChange((frameIndex + 1).coerceAtMost(timeline.size - 1)) }, modifier = Modifier.weight(1f)) {
                     Text("下帧 ▶")
                 }
+                // G07：末帧跳转（桌面 LastTurn）
+                Button(onClick = { onFrameChange(timeline.size - 1) }, modifier = Modifier.weight(1f)) {
+                    Text("末帧 ⏭")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(Modifier.weight(1f)) {
                     Button(onClick = { menuOpen = true }) {
                         Text("${speedLabels[speedIdx]} ⏩")

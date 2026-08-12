@@ -5,13 +5,17 @@ import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit as SimUnit
+import com.simplot.android.data.model.shiftWaypoints
 import com.simplot.android.data.repo.ScenarioRepository
 import com.simplot.android.data.util.CoordUtil
+import com.simplot.android.domain.engine.FormationEngine
+import com.simplot.android.domain.engine.FormationEngine.FormationSpec
 import com.simplot.android.engine.FogOfWar
 import com.simplot.android.engine.MovementEngine
 import com.simplot.android.engine.ReplayEngine
@@ -21,6 +25,160 @@ import com.simplot.android.render.MapRenderer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * Show Side 视图过滤（G30，桌面版 Show Side 菜单 All/Blue/Red）。
+ * 仅影响当前视图展示与命中检测，不落盘、不改变引擎状态。
+ * 纯 Kotlin 顶层枚举 → 可 JVM 单测。
+ */
+enum class ShowSide(val sideName: String?) {
+    ALL(null), BLUE("Blue"), RED("Red");
+
+    /** 单位（side 为空/未知按不过滤处理）是否属于当前视图 */
+    fun allows(side: String?): Boolean = sideName == null || side == sideName
+}
+
+/** ShowSide 中文标签（纯函数，UI 与测试共用） */
+fun showSideLabel(side: ShowSide): String = when (side) {
+    ShowSide.ALL -> "全部"
+    ShowSide.BLUE -> "蓝方"
+    ShowSide.RED -> "红方"
+}
+
+/**
+ * G10 自动存档门禁（桌面 WindowControlOptions CheckAutoSave + SaveAuto 前置条件）。
+ * 顶层纯函数 → 可 JVM 单测：开关关 / 无场景 / 无 URI 均不执行自动存档。
+ */
+fun autoSaveGate(enabled: Boolean, hasFile: Boolean, hasUri: Boolean): Boolean = enabled && hasFile && hasUri
+
+/**
+ * G11 错误日志追加（桌面 WindowErrorLog UpdateErrorLog 的本地载体）：
+ * 新条目插队首（最新在前），超过 [cap] 上限裁剪尾部，防止无限增长。
+ * 顶层纯函数（入参显式传时间戳）→ 可 JVM 单测。返回实际写入的条目。
+ */
+fun appendErrorLogEntry(log: MutableList<String>, msg: String, timestamp: String, cap: Int = 200): String {
+    val entry = "[$timestamp] $msg"
+    log.add(0, entry)
+    while (log.size > cap) log.removeAt(log.size - 1)
+    return entry
+}
+
+/** G11 日志时间戳（yyyy-MM-dd HH:mm:ss；默认当前时间） */
+fun formatLogTime(now: java.util.Date = java.util.Date()): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(now)
+
+/** Domain → IdNum 前缀（桌面版 GetIdNumber 分派；顶层纯函数，G29 粘贴与单测共用） */
+fun domainPrefixOf(u: SimUnit): String = when (com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(u)) {
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SURFACE -> "S"
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR -> "A"
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE -> "U"
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.VEHICLE -> "V"
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.INSTALLATION -> "I"
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.LAND_FORMATION -> "L"
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT -> "R"
+    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SONOBUOY -> "B"
+    else -> "S"
+}
+
+/**
+ * 新 IdNum（桌面版 GetIdNumber：全局自增，LastId 存于场景 JSON）。
+ * 取 max(现有同类最大, scenario.lastId) + 1 并写回 lastId（删除单位后不回退）。
+ * 顶层纯函数（G29 粘贴与单测共用）。
+ */
+fun nextIdFor(f: ScenarioFile, prefix: String = "S"): String {
+    var max = 0
+    f.units.forEach { u ->
+        u.idNum.removePrefix(prefix).toIntOrNull()?.let { if (it > max) max = it }
+    }
+    val next = maxOf(max, f.scenario.lastId) + 1
+    f.scenario.lastId = next
+    return prefix + next.toString().padStart(3, '0')
+}
+
+/**
+ * G29 粘贴核心逻辑（顶层纯函数，JVM 可单测）：
+ * 深拷贝剪贴板单位 → 防撞号（IdNum 走 [nextIdFor]、TrackNumber 走 [TrackCounter.allocate]）
+ * → 平移到粘贴位置（航路点随位移同步平移）→ 加入场景并返回新单位。
+ */
+fun pasteUnitInto(f: ScenarioFile, clipboard: SimUnit, x: Long, y: Long): SimUnit {
+    val gson = com.simplot.android.data.codec.JsonUtil.gson
+    val copy = gson.fromJson(gson.toJson(clipboard), SimUnit::class.java)
+    copy.idNum = nextIdFor(f, domainPrefixOf(copy))
+    copy.trackNumber = com.simplot.android.domain.engine.TrackCounter.allocate(f, copy.side)
+    copy.name = clipboard.name + " (副本)"
+    copy.isNewThisTurn = true
+    val dx = x - clipboard.x
+    val dy = y - clipboard.y
+    copy.x = x
+    copy.y = y
+    if (dx != 0L || dy != 0L) {
+        shiftWaypoints(copy.pastWaypointArray, dx, dy)
+        shiftWaypoints(copy.futureWaypointArray, dx, dy)
+    }
+    f.units.add(copy)
+    return copy
+}
+
+/**
+ * G32 Relocate 核心逻辑（顶层纯函数，JVM 可单测）：
+ * 移动单位到新位置并同步平移其历史/未来航路点（桌面版 CanvasMap_MouseDrag → RecalcWaypoints）。
+ * @return 是否找到并移动了该单位
+ */
+fun relocateUnitInto(f: ScenarioFile, id: String, x: Long, y: Long): Boolean {
+    val u = f.units.firstOrNull { it.idNum == id } ?: return false
+    val dx = x - u.x
+    val dy = y - u.y
+    if (dx == 0L && dy == 0L) return true
+    u.x = x
+    u.y = y
+    shiftWaypoints(u.pastWaypointArray, dx, dy)
+    shiftWaypoints(u.futureWaypointArray, dx, dy)
+    return true
+}
+
+/**
+ * G01 新场景初始化核心逻辑（顶层纯函数，JVM 可单测）：
+ * 构造空场景存档骨架（桌面版 WindowNewScenario → FileNewScenario → 空 Referee 存档）。
+ * - name：场景名；startTime：起始日期时间（YYYY-MM-DD HH:MM:SS，双时钟同值）
+ * - mapFileName 非空 → TypeOfMap=1（自定义地图）并记录文件名；否则 0（无地图）
+ * - 计数器保持桌面默认（蓝方 2400 / 红方 9000 起点），LastId=0，无单位/回合/标注
+ */
+fun newScenarioFile(
+    name: String,
+    startTime: String,
+    mapFileName: String? = null
+): ScenarioFile = ScenarioFile(
+    file = "Referee",
+    simPlotVersion = "2.3",
+    isIntegerFile = true,
+    scenario = com.simplot.android.data.model.Scenario(
+        scenarioName = name,
+        lastId = 0,
+        currentTrackNumber = 2400,
+        currentPlayerTrackNumber = 9000,
+        phase = 0,
+        typeOfMap = if (!mapFileName.isNullOrBlank()) 1 else 0,
+        mapFileName = mapFileName?.takeIf { it.isNotBlank() }
+    ),
+    typeOfGame = 0,
+    time = com.simplot.android.data.model.TimeState(
+        currentTurnTime = startTime,
+        currentPositionTime = startTime
+    ),
+    turns = mutableListOf(),
+    overlays = emptyMap(),
+    objects = mutableListOf(),
+    units = mutableListOf(),
+    formations = emptyMap()
+)
+
+/** G01：起始日期时间格式校验（严格 YYYY-MM-DD HH:MM:SS，复用 TimeUtil 解析；顶层纯函数可单测） */
+fun isValidScenarioStartTime(s: String): Boolean = try {
+    com.simplot.android.data.util.TimeUtil.parse(s.trim())
+    true
+} catch (e: Exception) {
+    false
+}
 
 /**
  * 游戏状态容器（架构重构 Phase 1 核心）。
@@ -73,15 +231,36 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         private set
     /** 设置弹窗开关 */
     var showSettings by mutableStateOf(false)
+
+    /** G10：自动存档开关（桌面 WindowControlOptions CheckAutoSave；默认开=桌面默认） */
+    var autoSaveEnabled by mutableStateOf(true)
     /** 编队管理弹窗开关（R6：桌面版 WindowFormation） */
     var showFormation by mutableStateOf(false)
+    /** G01：新场景创建弹窗开关（桌面版 File → New Scenario → WindowNewScenario） */
+    var showNewScenario by mutableStateOf(false)
+    /** G06：导出运动命令单位选择弹窗开关（桌面版 WindowExportOrders） */
+    var showExportOrders by mutableStateOf(false)
+
+    /** G01：新场景对话框已选地图文件名（SAF 选择后经 [rememberNewScenarioMapName] 回填；null=未选/无地图） */
+    var newScenarioMapName by mutableStateOf<String?>(null)
 
     /** 已完成的测量（桌面版 Measurement，用于 CSV 导出 + 画布留存绘制）：起终点世界坐标
      *  SnapshotStateList：draw 阶段迭代读 → 变更即触发 Canvas 失效重绘（反馈①修复核心） */
     val measureLog = mutableStateListOf<Pair<Pair<Long, Long>, Pair<Long, Long>>>()
 
-    /** 符号风格（桌面版玩家设置：NTDS / CWS）；契约8：默认 CWS（打开存档即显示类型独特精灵图标，NTDS 仍可手动切换） */
-    var symbolStyle by mutableStateOf(com.simplot.android.render.UnitRenderer.SymbolStyle.CWS)
+    /**
+     * 符号风格（G47 重构：由 PlayerSettings.symbolSet / ww2Symbols 派生，不再独立存状态）。
+     * 兼容保留（MainActivity 顶栏按钮显示/循环用）：WW2 附加切换开 → WW2；
+     * 符号集=NTDS → NTDS；其余（CWS 三变体）→ CWS。契约8：默认 CWS（=CWS Color Filled）。
+     */
+    var symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle
+        get() = when {
+            settings.ww2Symbols -> com.simplot.android.render.UnitRenderer.SymbolStyle.WW2
+            settings.symbolSet == com.simplot.android.domain.model.SymbolSet.NTDS ->
+                com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
+            else -> com.simplot.android.render.UnitRenderer.SymbolStyle.CWS
+        }
+        set(_) { /* 只读派生：切换请走 toggleSymbolStyle() 或设置对话框 */ }
 
     /** 显式版本号：任何场景变更后自增，驱动 Compose 重组（替代 turnTick） */
     var revision by mutableStateOf(0)
@@ -89,6 +268,21 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     var rangeExhaustedUnit by mutableStateOf<SimUnit?>(null)
         private set
+
+    /** G30：Show Side 视图过滤（All/Blue/Red，仅影响视图，不落盘） */
+    var showSide by mutableStateOf(ShowSide.ALL)
+        private set
+
+    /** G40：到达最终航路点三选弹窗当前单位（桌面 NoFutureWaypoints） */
+    var finalWaypointUnit by mutableStateOf<SimUnit?>(null)
+        private set
+
+    /** G29：剪贴板单位（桌面 Copy Unit → 剪贴板；Paste 时防撞号分配并放置到任意位置） */
+    var clipboardUnit by mutableStateOf<SimUnit?>(null)
+        private set
+
+    /** G40：一次 Do 多艘船到达最终航路点时的待弹队列（逐个弹出） */
+    private val finalWaypointQueue = mutableListOf<String>()
 
     // ---- 回放状态 ----
     var replayTimeline by mutableStateOf<List<ReplayEngine.Frame>>(emptyList())
@@ -104,8 +298,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _toasts = MutableStateFlow<String?>(null)
     val toasts: StateFlow<String?> = _toasts.asStateFlow()
 
+    // ---- G11：错误日志（桌面 WindowErrorLog Listbox1 + UpdateErrorLog）----
+    // 内存滚动日志：toast 通道顺带记录（带时间戳，最新在前），设置弹窗内可查看/清空。
+    val errorLog = mutableStateListOf<String>()
+
     fun toast(msg: String) {
         _toasts.value = msg
+        // G11：顺带写入内存错误日志（toast 含错误与关键操作反馈，供排查场景加载/文件错误）
+        appendErrorLogEntry(errorLog, msg, formatLogTime())
+    }
+
+    /** G11：显式记录错误日志（不经 toast，静默记录） */
+    fun logError(msg: String) = appendErrorLogEntry(errorLog, msg, formatLogTime())
+
+    /** G11：清空错误日志（桌面 WindowErrorLog 清空语义） */
+    fun clearErrorLog() {
+        errorLog.clear()
     }
 
     /** 消费当前 Toast（UI 显示后调用，避免重复弹） */
@@ -139,6 +347,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val loaded = scenarioUseCases.load(uri).getOrElse { throw it }
             applyLoaded(loaded)
+            // G55：加载场景目录内 player_settings.json 并应用（桌面 LoadFile → LoadPlayerSettings）。
+            // 语义：文件设置覆盖内存设置（渲染/导出玩家名即时生效）；不写本地 SharedPreferences
+            // （本地是全局默认，文件是场景级设置，两者互不覆盖）。
+            repo.parentTreeUri(uri)?.let { dir ->
+                repo.loadPlayerSettings(dir)?.let { fileSettings ->
+                    settings = fileSettings
+                    toast("已应用场景目录玩家设置")
+                }
+            }
             loaded.scenario.mapFileName?.takeIf { it.isNotBlank() }?.let { mapName ->
                 autoLoadMap(mapName, uri)
             }
@@ -244,6 +461,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * 反馈⑱：保存三文件到指定目标文件（系统「保存为」对话框返回的 document uri）。
      * 目标文件写 Referee json；Blue/Red.SpScn 写到同一目录（由目标文件 documentId 推导父目录 tree uri）。
+     * G55：保存时回写当前玩家设置到场景目录（桌面 SaveFile → SavePlayerSettings）。
      */
     fun saveThreeFilesTo(targetUri: Uri) {
         val current = file ?: run {
@@ -252,19 +470,40 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         try {
             val saved = scenarioUseCases.saveThreeFiles(targetUri, current).getOrElse { throw it }
-            toast(if (saved) "已保存：Referee json + Blue.SpScn + Red.SpScn" else "已保存 Referee json")
+            repo.parentTreeUri(targetUri)?.let { repo.savePlayerSettings(it, settings) }
+            toast(if (saved) "已保存：Referee json + Blue.SpScn + Red.SpScn（含玩家设置）" else "已保存 Referee json")
         } catch (e: Exception) {
             toast("保存失败：${e.message}")
         }
     }
 
-    /** 导出运动命令（桌面版 WindowExportOrders）；玩家名用设置值（R-P3 修复） */
-    fun exportMovementOrders(directory: Uri) {
+    /**
+     * G25：显式保存玩家设置到场景目录（桌面 File → Save Player Settings → SavePlayerSettings）。
+     * 无场景/无法定位目录时给出提示（不弹系统对话框：目标固定为场景目录 player_settings.json）。
+     */
+    fun savePlayerSettingsToScenarioDir() {
+        if (file == null) { toast("请先打开一个场景"); return }
+        val parent = currentUri?.let { repo.parentTreeUri(it) }
+        if (parent == null) { toast("无法定位场景目录（请先保存场景）"); return }
+        repo.savePlayerSettings(parent, settings)
+        toast("已保存玩家设置到场景目录：player_settings.json")
+    }
+
+    /**
+     * 导出运动命令（桌面版 WindowExportOrders）；G06：支持单位子集 + 玩家名。
+     * 缺省参数保持旧行为（全量单位 + 设置内玩家名）；玩家名空 → "Player"（R-P3 修复）。
+     */
+    fun exportMovementOrders(
+        directory: Uri,
+        units: List<SimUnit> = file?.units ?: emptyList(),
+        playerName: String = settings.playerName
+    ) {
         val f = file ?: return
+        if (units.isEmpty()) { toast("无单位可导出"); return }
         try {
-            val playerName = settings.playerName.ifBlank { "Player" }
-            repo.exportMovementOrders(directory, playerName, f.units)
-            toast("已导出运动命令：Movement - $playerName.json")
+            val name = playerName.ifBlank { "Player" }
+            repo.exportMovementOrders(directory, name, units)
+            toast("已导出运动命令（${units.size} 个单位）：Movement - $name.json")
         } catch (e: Exception) {
             toast("导出失败：${e.message}")
         }
@@ -282,25 +521,71 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 自动存档（桌面版 SaveAuto）：Do 回合后调用，写 Referee Turn N json 到场景目录（静默，不打扰） */
+    /**
+     * 自动存档（桌面版 SaveAuto）：Do 回合后调用，写 Referee Turn N json 到场景目录（静默，不打扰）。
+     *
+     * G54 核对（批次4）：触发时机与桌面版一致——
+     * - 桌面：仅回合推进（ContainerTurn.PushNextTurn → CheckFutureWaypoints → SaveAuto）后自动存；UndoTurn 不存；
+     * - 安卓：仅 doTurn() 成功后 autoSave()（undo()/next() 均不触发），语义对齐；
+     * - 文件名 "Referee Turn <N>_<回合时间>.json"（冒号→下划线）与桌面 SaveAuto 反汇编
+     *   字符串 ['Referee Turn ', ':', '_'] + ReplaceAll 逐字符一致；
+     * - CheckAutoSave 开关已落地（G10：autoSaveEnabled + autoSaveGate 门禁，默认开）。
+     */
     fun autoSave() {
+        // G10：开关关 / 无场景 / 无 URI → 不执行（门禁逻辑集中，autoSaveGate 可单测）
+        if (!autoSaveGate(autoSaveEnabled, file != null, currentUri != null)) return
         val f = file ?: return
         val currentUri = currentUri ?: return
         try {
             val turnNo = f.turns.size + 1
             scenarioUseCases.saveAuto(currentUri, f, turnNo)
+            // G55：桌面 SaveAuto 也回写玩家设置（反汇编确认 SaveAuto 调用 SavePlayerSettings）
+            repo.parentTreeUri(currentUri)?.let { repo.savePlayerSettings(it, settings) }
         } catch (e: Exception) {
             // 自动存档失败不阻塞推演
         }
     }
 
-    /** 保存 Setup 文件（桌面版 SaveSetupFile）：与场景同格式标记 Setup */
+    /** 保存 Setup 文件（桌面版 SaveSetupFile）：与场景同格式标记 Setup；G55：同目录回写玩家设置 */
     fun saveSetup(target: Uri) {
         val f = file ?: run { toast("请先打开一个场景"); return }
         try {
-            if (scenarioUseCases.saveSetup(target, f)) toast("已保存 Setup 文件") else toast("保存 Setup 失败")
+            if (scenarioUseCases.saveSetup(target, f)) {
+                repo.parentTreeUri(target)?.let { repo.savePlayerSettings(it, settings) }
+                toast("已保存 Setup 文件")
+            } else toast("保存 Setup 失败")
         } catch (e: Exception) {
             toast("保存 Setup 失败：${e.message}")
+        }
+    }
+
+    // ============ G28：单位级导入导出（桌面 Units → Import Unit / Export Unit） ============
+
+    /** G28：导出选中单位到目录（桌面 Export Unit）；无选中 → 提示 */
+    fun exportSelectedUnit(directory: Uri) {
+        val f = file ?: return
+        val unit = selectedUnitId?.let { id -> f.units.firstOrNull { it.idNum == id } }
+            ?: run { toast("请先选中要导出的单位"); return }
+        try {
+            repo.exportUnit(directory, unit)
+            toast("已导出单位：${unit.name}（Unit ${unit.idNum}.json）")
+        } catch (e: Exception) {
+            toast("导出失败：${e.message}")
+        }
+    }
+
+    /** G28：导入单单位（桌面 Import Unit）；同 IdNum 替换 / 否则新增（基本版，不重分配 IdNum） */
+    fun importUnit(uri: Uri) {
+        val f = file ?: run { toast("请先打开一个场景"); return }
+        try {
+            val (unit, replaced) = repo.importUnit(uri, f)
+            revision++
+            toast(
+                if (replaced) "已导入单位并替换：${unit.name}（${unit.idNum}）"
+                else "已导入新单位：${unit.name}（${unit.idNum}）"
+            )
+        } catch (e: Exception) {
+            toast("导入失败：${e.message}")
         }
     }
 
@@ -314,6 +599,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         revision++
         // Range 耗尽检测：桌面版三选弹窗（Continue/Delete/Stop）；已选"继续移动"不再提示
         result.rangeExhausted.firstOrNull()?.let { id -> rangeExhaustedUnit = f.units.firstOrNull { it.idNum == id } }
+        // G40：到达最终航路点三选弹窗（桌面 NoFutureWaypoints：Continue/Delete/Stop）。
+        // 一次 Do 多艘船到达时排队逐个弹出；Range 弹窗优先（两个弹窗不叠加）。
+        finalWaypointQueue.clear()
+        finalWaypointQueue.addAll(result.finalWaypointReached)
+        if (rangeExhaustedUnit == null) popNextFinalWaypoint()
         // 自动存档（桌面版 SaveAuto：每回合 Referee Turn N）
         autoSave()
         toast("Do：已移动至 ${result.newPositionTime}")
@@ -394,77 +684,48 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 单位复制（桌面版 CopyUnit）：深拷贝 + 新 IdNum/TrackNumber + 附近偏移。
-     * P0 修复：同步维护 scenario.lastId / currentTrackNumber（桌面 GetIdNumber/GetTrackNumber 依赖存档计数器）。
+     * G29：复制单位到剪贴板（桌面版 Copy Unit → 剪贴板，不再立即生成副本；
+     * 粘贴时经 [pasteUnitInto] 分配防撞号并放置到指定位置）。
+     * 深拷贝（Gson 往返）：后续对原单位的编辑不影响剪贴板内容。
      */
-    fun duplicateUnit(unit: SimUnit) {
-        file?.let { f ->
-            val gson = com.simplot.android.data.codec.JsonUtil.gson
-            val copy = gson.fromJson(gson.toJson(unit), SimUnit::class.java)
-            copy.idNum = nextId(f, domainPrefix(unit))
-            copy.trackNumber = allocateTrackNumber(f, unit.side)
-            copy.name = unit.name + " (副本)"
-            copy.isNewThisTurn = true
-            val (dx, dy) = CoordUtil.offsetNm(135.0, 2.0)
-            copy.x = unit.x + dx
-            copy.y = unit.y + dy
-            val domain = com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(unit)
-            if (domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.INSTALLATION ||
-                domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.LAND_FORMATION
-            ) {
-                copy.sensorArray = null
-                copy.weaponArray = null
-            }
-            f.units.add(copy)
-            selectedUnitId = copy.idNum
-            revision++
-            toast("已复制：${copy.name}")
-        }
+    fun copyUnitToClipboard(unit: SimUnit) {
+        val gson = com.simplot.android.data.codec.JsonUtil.gson
+        clipboardUnit = gson.fromJson(gson.toJson(unit), SimUnit::class.java)
+        toast("已复制 ${unit.name}，选中任意单位后点 Paste 放置")
     }
 
-    /** Domain → IdNum 前缀（桌面版 GetIdNumber 分派） */
-    private fun domainPrefix(u: SimUnit): String = when (com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(u)) {
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SURFACE -> "S"
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR -> "A"
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE -> "U"
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.VEHICLE -> "V"
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.INSTALLATION -> "I"
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.LAND_FORMATION -> "L"
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT -> "R"
-        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SONOBUOY -> "B"
-        else -> "S"
+    /** G29：粘贴剪贴板单位到指定位置（防撞号：IdNum/TrackNumber 走计数器分配，见 [pasteUnitInto]） */
+    fun pasteUnit(x: Long, y: Long) {
+        val f = file ?: return
+        val clip = clipboardUnit ?: run { toast("剪贴板为空：请先在编辑窗口点「复制」"); return }
+        val copy = pasteUnitInto(f, clip, x, y)
+        selectedUnitId = copy.idNum
+        revision++
+        toast("已粘贴：${copy.name}")
+    }
+
+    /** G32：Relocate 拖拽移动（长按拖拽实时调用；同步平移该单位历史/未来航路点） */
+    fun relocate(id: String, x: Long, y: Long) {
+        val f = file ?: return
+        if (relocateUnitInto(f, id, x, y)) revision++
     }
 
     /**
      * 新 IdNum（桌面版 GetIdNumber：全局自增，LastId 存于场景 JSON）。
      * P0 修复：max(现有同类最大, scenario.lastId) + 1，并写回 lastId（删除单位后不回退）。
+     * 实现委托顶层纯函数 [nextIdFor]（G29 粘贴与单测共用同一逻辑）。
      */
-    private fun nextId(f: ScenarioFile, prefix: String = "S"): String {
-        var max = 0
-        f.units.forEach { u ->
-            u.idNum.removePrefix(prefix).toIntOrNull()?.let { if (it > max) max = it }
-        }
-        val next = maxOf(max, f.scenario.lastId) + 1
-        f.scenario.lastId = next
-        return prefix + next.toString().padStart(3, '0')
-    }
+    private fun nextId(f: ScenarioFile, prefix: String = "S"): String = nextIdFor(f, prefix)
 
     /**
      * 分配 TrackNumber（桌面版 GetTrackNumber/GetPlayerTrackNumber：蓝/红各一套计数器）。
      * P0 修复：红方用 currentPlayerTrackNumber，其余用 currentTrackNumber；
      * 取 max(计数器, 现有最大) + 1 并写回（删除后不回退）。
+     * N2 修复：逻辑提取到 [com.simplot.android.domain.engine.TrackCounter]（可 JVM 单测），
+     * 新建单位 / 复制单位 / 护航队三条路径共用。
      */
-    private fun allocateTrackNumber(f: ScenarioFile, side: String): Int {
-        val maxTn = f.units.maxOfOrNull { it.trackNumber } ?: 2400
-        if (side == "Red") {
-            val next = maxOf(f.scenario.currentPlayerTrackNumber, maxTn) + 1
-            f.scenario.currentPlayerTrackNumber = next
-            return next
-        }
-        val next = maxOf(f.scenario.currentTrackNumber, maxTn) + 1
-        f.scenario.currentTrackNumber = next
-        return next
-    }
+    private fun allocateTrackNumber(f: ScenarioFile, side: String): Int =
+        com.simplot.android.domain.engine.TrackCounter.allocate(f, side)
 
     /**
      * 新建单位（P1：桌面版各类型 NewUnit 窗口）。按 Domain 分派前缀与类型，插入到场景中。
@@ -504,25 +765,72 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 创建护航队（P2 恢复，桌面版 Game.Convoy.CreateConvoy）：
-     * COMMODORE 居中，Merchant 环绕，dist=2000 码，角度均匀分布。
+     * 创建护航队（P2 恢复，桌面版 Game.Convoy.CreateConvoy）。
+     * G03：参数契约 = [ConvoySpec]（含航向/速度/列行数/列行间距；列行>0 走网格布局）。
+     * COMMODORE 居中，Merchant 环绕/网格，角度均匀分布或列×行排布。
      * 逻辑在 [com.simplot.android.domain.engine.ConvoyEngine]（纯 Kotlin 可单测）。
      */
-    fun createConvoy(commodoreName: String = "COMMODORE", escortCount: Int = 6, distYards: Int = 2000) {
+    fun createConvoy(spec: com.simplot.android.domain.engine.ConvoyEngine.ConvoySpec = com.simplot.android.domain.engine.ConvoyEngine.ConvoySpec()) {
         file?.let { f ->
             val units = com.simplot.android.domain.engine.ConvoyEngine.build(
                 f,
-                com.simplot.android.domain.engine.ConvoyEngine.ConvoySpec(
-                    commodoreName = commodoreName,
-                    escortCount = escortCount,
-                    distYards = distYards
-                ),
-                nextId = { prefix -> nextId(f, prefix) }
+                spec,
+                nextId = { prefix -> nextId(f, prefix) },
+                // N2 修复：护航队也走 TrackNumber 计数器（与新建/复制单位一致），
+                // 桌面续建不撞号（原 ConvoyEngine 本地 max+1 不写回 currentTrackNumber）
+                nextTrackNumber = { side -> allocateTrackNumber(f, side) }
             )
             f.units.addAll(units)
             revision++
-            toast("已创建护航队：1 指挥舰 + $escortCount 商船")
+            toast("已创建护航队：1 指挥舰 + ${spec.merchantCount()} 商船")
         }
+    }
+
+    // ================= G01 新场景创建（桌面版 WindowNewScenario） =================
+
+    /** G01：新场景默认起始时间（当前时刻，YYYY-MM-DD HH:MM:SS） */
+    fun defaultScenarioStartTime(): String = com.simplot.android.data.util.TimeUtil.now()
+
+    /** G01：记录新场景对话框所选地图文件名（从 SAF uri 查询显示名；地图本身已由 MainActivity 调 loadMapFile 加载预览） */
+    fun rememberNewScenarioMapName(uri: Uri) {
+        newScenarioMapName = queryDisplayName(uri)
+    }
+
+    /**
+     * G01：创建新场景（桌面版 WindowNewScenario PushOk）。
+     * 用 [newScenarioFile] 构造空 Referee 骨架替换当前场景，清空全部编辑/回放/编队状态，
+     * 新场景立即可继续编辑（加单位/存航线）并走现有保存流程落盘。
+     * 地图：选择时已加载到 mapRenderer（画布预览）；文件名写入 Scenario.MapFileName，
+     * 保存后重开场景按桌面语义自动加载同目录地图。
+     */
+    fun createNewScenario(name: String, startTime: String, mapFileName: String?) {
+        if (name.isBlank()) { toast("场景名不能为空"); return }
+        if (!isValidScenarioStartTime(startTime)) { toast("起始时间格式应为 YYYY-MM-DD HH:MM:SS"); return }
+        file = newScenarioFile(name.trim(), startTime, mapFileName)
+        currentUri = null
+        selectedUnitId = null
+        editUnit = null
+        editArcUnit = null
+        editWaypointsUnit = null
+        clipboardUnit = null
+        rangeExhaustedUnit = null
+        finalWaypointUnit = null
+        finalWaypointQueue.clear()
+        replayTimeline = emptyList()
+        replayPlaying = false
+        replayIndex = 0
+        measureMode = false
+        clearMeasures()
+        miscAnnotations = emptyList()
+        formationSpecs.clear()
+        // 无地图的新场景清掉上一场景残留地图（parser 数据 + 背景位图）
+        if (mapFileName.isNullOrBlank()) {
+            mapRenderer.parser.clear()
+            mapRenderer.bitmap = null
+            mapRenderer.pendingBackgroundName = null
+        }
+        revision++
+        toast("已创建新场景：${name.trim()}，起始 ${startTime}（可添加单位并保存）")
     }
 
     /**
@@ -556,6 +864,89 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     /** 场景编队名列表 */
     fun formationNames(): List<String> = file?.let { com.simplot.android.domain.engine.FormationEngine.formationNames(it) } ?: emptyList()
 
+    // ================= G02 编队编辑器：创建/重命名/删除/成员/设中心/类型/距离单位 =================
+
+    /**
+     * 编队规格表（G02：创建时定义的类型/距离单位）。
+     * 空队形仅存内存注册表；存档层队形由成员单位携带字段，有成员才随存档持久化。
+     */
+    private val formationSpecs = mutableStateMapOf<String, FormationSpec>()
+
+    /** 编队规格只读视图（FormationDialog 展示类型/距离单位用） */
+    fun formationSpecs(): Map<String, FormationSpec> = formationSpecs
+
+    /** 创建编队（命名 + 类型三选 + 距离单位；桌面版 CreateFormation） */
+    fun formationCreate(name: String, type: String, distanceUnit: String) {
+        if (name.isBlank()) { toast("队形名不能为空"); return }
+        if (formationNames().any { it == name } || formationSpecs.containsKey(name)) {
+            toast("编队 $name 已存在"); return
+        }
+        FormationEngine.registerFormation(formationSpecs, name, type, distanceUnit)
+        revision++
+        toast("编队 $name 已创建")
+    }
+
+    /** 重命名编队（桌面版队形名编辑） */
+    fun formationRename(oldName: String, newName: String) {
+        if (newName.isBlank()) { toast("队形名不能为空"); return }
+        if (oldName == newName) return
+        if (formationNames().any { it == newName } || formationSpecs.containsKey(newName)) {
+            toast("编队 $newName 已存在"); return
+        }
+        file?.let { f -> FormationEngine.renameFormation(f.units, formationSpecs, oldName, newName) }
+        revision++
+        toast("编队 $oldName 已重命名为 $newName")
+    }
+
+    /** 删除编队（清全部成员队形标志 + 移除规格；桌面版 DeleteFormation） */
+    fun formationDelete(name: String) {
+        file?.let { f -> FormationEngine.deleteFormation(f.units, formationSpecs, name) }
+        revision++
+        toast("编队 $name 已删除")
+    }
+
+    /** 设中心单位（桌面版 SetCenter） */
+    fun formationSetCenter(name: String, unitId: String) {
+        file?.let { f ->
+            if (FormationEngine.setCenter(f.units, name, unitId)) {
+                revision++
+                toast("编队 $name 中心已设为 $unitId")
+            }
+        }
+    }
+
+    /** 添加成员（桌面版 AddUnit；单位须在场景中） */
+    fun formationMemberAdd(name: String, unitId: String) {
+        file?.let { f ->
+            val u = f.units.firstOrNull { it.idNum == unitId } ?: return
+            FormationEngine.addMember(u, name, formationSpecs[name]?.type ?: FormationEngine.FormationTypes.COLUMN)
+            revision++
+            toast("${u.name} 已加入编队 $name")
+        }
+    }
+
+    /** 移除成员（桌面版 RemoveUnit） */
+    fun formationMemberRemove(name: String, unitId: String) {
+        file?.let { f ->
+            val u = f.units.firstOrNull { it.idNum == unitId } ?: return
+            FormationEngine.removeMember(u)
+            revision++
+            toast("${u.name} 已移出编队 $name")
+        }
+    }
+
+    /** 修改队形类型（规格 + 全部成员 formationType 同步） */
+    fun formationSetType(name: String, type: String) {
+        file?.let { f -> FormationEngine.setType(f.units, formationSpecs, name, type) }
+        revision++
+    }
+
+    /** 修改距离单位（仅规格，显示层换算） */
+    fun formationSetDistanceUnit(name: String, unit: String) {
+        FormationEngine.setDistanceUnit(formationSpecs, name, unit)
+        revision++
+    }
+
     /** 测量完成回调：记录测量线（不自动退出测量模式，可连续画多条对照；退出由按钮/选中单位触发） */
     fun onMeasureComplete(start: Pair<Long, Long>, end: Pair<Long, Long>) {
         measureLog.add(start to end)
@@ -569,43 +960,32 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 导出相对位置 CSV（D5 决策：桌面版 ExportData.RelativeUnitPositions）。
+     * 导出相对位置 CSV（D5 决策：桌面版 ExportData.RelativeUnitPositions.Export）。
      * 表头：TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI,Range Yards,Range Meters
      * 每行 = 一个单位相对参考单位（选中单位，无则第一个）的方位/距离，三列距离同时输出。
-     * 文件名：<前缀>_<日期>_<时间>.csv（JAN..DEC 月份缩写，桌面版格式）。
+     * 文件名：`<前缀>_<日期>_<时间>.csv`（G57：前缀 "TN"、JAN..DEC 月份缩写、'-' 分隔，桌面反汇编确认）。
+     * N1 修复：CSV 文本生成提取到 [com.simplot.android.data.export.RelativePositionsCsv]（可 JVM 单测），
+     * 并在 MainActivity 增加 UI 入口（导出CSV 菜单 → 相对位置）。
      */
     fun exportRelativePositionsCsv(directory: Uri) {
         val f = file ?: run { toast("请先打开一个场景"); return }
         if (f.units.isEmpty()) { toast("场景无单位"); return }
-        val ref = f.units.firstOrNull { it.idNum == selectedUnitId } ?: f.units.first()
+        val ref = com.simplot.android.data.export.RelativePositionsCsv.resolveReference(f.units, selectedUnitId)
         val refName = "TN ${ref.trackNumber} ${ref.name}".trim()
         try {
-            val sb = StringBuilder()
-            sb.append("TN,X,Y,Course,Speed,Alt/Depth,Bearing,Range NMI,Range Yards,Range Meters\n")
-            f.units.forEach { u ->
-                if (u.idNum == ref.idNum) return@forEach
-                val bearing = CoordUtil.bearingDeg(ref.x, ref.y, u.x, u.y)
-                val distNm = CoordUtil.distanceNm(ref.x, ref.y, u.x, u.y)
-                val distYards = distNm * CoordUtil.YARDS_PER_NMI
-                val distMeters = distNm * 1852.0
-                val altDepth = u.altitudeMeters() ?: u.depthMeters() ?: 0
-                sb.append("${u.trackNumber},")
-                sb.append("${u.x},${u.y},")
-                sb.append("${String.format("%.0f", u.courseDeg())},${String.format("%.0f", u.speedKnots())},$altDepth,")
-                sb.append("${String.format("%.1f", bearing)},${String.format("%.2f", distNm)},${String.format("%.1f", distYards)},${String.format("%.1f", distMeters)}\n")
-            }
-            val now = java.time.LocalDateTime.now()
-            val mon = arrayOf("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC")[now.monthValue - 1]
-            val stamp = "${now.year}_${mon}_${now.dayOfMonth}_${String.format("%02d", now.hour)}_${String.format("%02d", now.minute)}"
-            val uri = repo.createFile(directory, "TN ${ref.trackNumber}_$stamp.csv", "text/csv")
-            repo.writeText(uri, sb.toString())
+            val csv = com.simplot.android.data.export.RelativePositionsCsv.build(f.units, selectedUnitId)
+            val name = com.simplot.android.data.export.RelativePositionsCsv.csvFileName("TN", java.time.LocalDateTime.now())
+            val uri = repo.createFile(directory, name, "text/csv")
+            repo.writeText(uri, csv)
             toast("已导出相对位置 CSV（参考：$refName，${f.units.size - 1} 个单位）")
         } catch (e: Exception) {
             toast("导出失败：${e.message}")
         }
     }
 
-    /** 导出测量 CSV（测量线专用，表头与相对位置导出区分，避免与桌面同名功能混淆） */
+    /** 导出测量 CSV（测量线专用，表头与相对位置导出区分，避免与桌面同名功能混淆）。
+     *  G57：文件名不再固定 Measurements.csv（固定名重复导出互相覆盖、不符桌面命名约定），
+     *  改走桌面 `<前缀>_<日期>_<时间>.csv` 约定（前缀 Measurements）。 */
     fun exportMeasureCsv(directory: Uri) {
         if (measureLog.isEmpty()) {
             toast("无测量记录")
@@ -623,7 +1003,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 sb.append("${start.first},${start.second},${end.first},${end.second},")
                 sb.append(String.format("%.1f,%.2f,%.1f,%.1f\n", bearing, distNm, distYards, distMeters))
             }
-            val uri = repo.createFile(directory, "Measurements.csv", "text/csv")
+            val uri = repo.createFile(
+                directory,
+                com.simplot.android.data.export.RelativePositionsCsv.csvFileName("Measurements", java.time.LocalDateTime.now()),
+                "text/csv"
+            )
             repo.writeText(uri, sb.toString())
             toast("已导出测量 CSV：${measureLog.size} 条")
         } catch (e: Exception) {
@@ -631,20 +1015,40 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 切换符号风格：NTDS → CWS → WW2 → NTDS（R5：三态循环） */
+    /**
+     * 切换符号风格：NTDS → CWS → WW2 → NTDS（R5 三态循环语义保留，G47 后主选择落 settings）。
+     * WW2 为附加切换（ww2Symbols=true），其余写入 settings.symbolSet（设置对话框四选同源）。
+     */
     fun toggleSymbolStyle() {
-        symbolStyle = when (symbolStyle) {
-            com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS -> com.simplot.android.render.UnitRenderer.SymbolStyle.CWS
-            com.simplot.android.render.UnitRenderer.SymbolStyle.CWS -> com.simplot.android.render.UnitRenderer.SymbolStyle.WW2
-            com.simplot.android.render.UnitRenderer.SymbolStyle.WW2 -> com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS
+        val (set, ww2) = when {
+            settings.ww2Symbols -> com.simplot.android.domain.model.SymbolSet.NTDS to false
+            settings.symbolSet == com.simplot.android.domain.model.SymbolSet.NTDS ->
+                com.simplot.android.domain.model.SymbolSet.CWS_COLOR_FILLED to false
+            else -> com.simplot.android.domain.model.SymbolSet.CWS_COLOR_FILLED to true
         }
+        updateSettings { it.copy(symbolSet = set, ww2Symbols = ww2) }
         toast("符号风格：${symbolStyle}")
     }
 
     // ============ 弹窗 / 测量 ============
 
+    /** G30：Show Side 三态循环 All → Blue → Red → All（桌面 Show Side 菜单语义） */
+    fun cycleShowSide() {
+        showSide = when (showSide) {
+            ShowSide.ALL -> ShowSide.BLUE
+            ShowSide.BLUE -> ShowSide.RED
+            ShowSide.RED -> ShowSide.ALL
+        }
+        // 过滤隐藏当前选中单位时清除选中（避免选中不可见单位）
+        val sel = selectedUnitId?.let { id -> file?.units?.firstOrNull { it.idNum == id } }
+        if (sel != null && !showSide.allows(sel.side)) selectedUnitId = null
+        toast("视图：${showSideLabel(showSide)}")
+    }
+
     fun dismissRangeDialog() {
         rangeExhaustedUnit = null
+        // G40：Range 弹窗优先，关闭后顺延弹出最终航路点队列
+        popNextFinalWaypoint()
     }
 
     /** Range 耗尽三选：继续移动（无视 Range） */
@@ -656,6 +1060,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             revision++
         }
         toast("${u.name} 继续（无视航程限制）")
+        popNextFinalWaypoint()
     }
 
     /** Range 耗尽三选：删除单位 */
@@ -669,6 +1074,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             revision++
         }
         toast("已删除 ${u.name}")
+        popNextFinalWaypoint()
     }
 
     /** Range 耗尽三选：停止单位（Range 置无限制并停船） */
@@ -684,6 +1090,63 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             revision++
         }
         toast("${u.name} 已停止")
+        popNextFinalWaypoint()
+    }
+
+    // ============ G40：到达最终航路点三选（桌面 NoFutureWaypoints） ============
+
+    /** 弹出队列中下一个仍在场的单位；队列空则关闭弹窗 */
+    private fun popNextFinalWaypoint() {
+        val f = file ?: run { finalWaypointUnit = null; return }
+        while (finalWaypointQueue.isNotEmpty()) {
+            val id = finalWaypointQueue.removeAt(0)
+            val u = f.units.firstOrNull { it.idNum == id }
+            if (u != null) {
+                finalWaypointUnit = u
+                return
+            }
+        }
+        finalWaypointUnit = null
+    }
+
+    /** 取消/点击外部：清空队列（未处理的单位按桌面默认继续直行，不产生状态变更） */
+    fun dismissFinalWaypointDialog() {
+        finalWaypointUnit = null
+        finalWaypointQueue.clear()
+    }
+
+    /** 继续移动：无航路点沿当前航向直行（引擎本就如此，无需状态变更） */
+    fun continueFinalWaypoint() {
+        val u = finalWaypointUnit ?: return
+        finalWaypointUnit = null
+        toast("${u.name} 继续移动（沿当前航向直行）")
+        popNextFinalWaypoint()
+    }
+
+    /** 删除单位（桌面 NoFutureWaypoints Delete Unit） */
+    fun deleteFinalWaypoint() {
+        val u = finalWaypointUnit ?: return
+        finalWaypointUnit = null
+        file?.let { f ->
+            f.units.removeAll { it.idNum == u.idNum }
+            f.objects.removeAll { it == u.idNum }
+            selectedUnitId = null
+            revision++
+        }
+        toast("已删除 ${u.name}")
+        popNextFinalWaypoint()
+    }
+
+    /** 停止单位（桌面 NoFutureWaypoints Stop Unit：停船保持位置） */
+    fun stopFinalWaypoint() {
+        val u = finalWaypointUnit ?: return
+        finalWaypointUnit = null
+        file?.let { f ->
+            f.units.firstOrNull { it.idNum == u.idNum }?.let { it.speed = 0 }
+            revision++
+        }
+        toast("${u.name} 已停止")
+        popNextFinalWaypoint()
     }
 
     // ============ 回放 ============

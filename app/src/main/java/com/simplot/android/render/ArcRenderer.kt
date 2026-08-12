@@ -3,7 +3,26 @@ package com.simplot.android.render
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import com.simplot.android.data.model.Sensor
 import com.simplot.android.data.model.Unit
+import com.simplot.android.data.model.Weapon
+
+/**
+ * G23 弧固定排序（桌面 ContainerSensors/ContainerWeapons 的列表顺序即绘制顺序；
+ * 安卓弧编辑器暂无上移/下移 UI，此处用确定性键序保证绘制顺序跨会话稳定）：
+ * startAngle 升序 → maxRange 升序（同角小半径先画，重叠时大弧盖小弧）。
+ * 返回新列表，不改原数组；顶层纯函数 → 可 JVM 单测。
+ */
+fun <T> sortedArcs(arcs: List<T>, startAngleOf: (T) -> Double, maxRangeOf: (T) -> Double): List<T> =
+    arcs.sortedWith(compareBy(startAngleOf, maxRangeOf))
+
+/** G23 便捷入口：传感器弧排序（null 视为空列表） */
+fun sortedSensorArcs(arcs: List<Sensor>?): List<Sensor> =
+    sortedArcs(arcs.orEmpty(), { it.startAngle }, { it.maxRange })
+
+/** G23 便捷入口：武器弧排序（null 视为空列表） */
+fun sortedWeaponArcs(arcs: List<Weapon>?): List<Weapon> =
+    sortedArcs(arcs.orEmpty(), { it.startAngle }, { it.maxRange })
 
 /**
  * 传感器/武器射程弧渲染器（对应桌面版 Sensors / Weapons 显示）。
@@ -39,16 +58,16 @@ object ArcRenderer {
         val (cx, cy) = camera.worldToScreen(u.x, u.y, canvasW, canvasH)
         val headingRad = Math.toRadians(u.courseDeg())
 
-        // 传感器弧
+        // 传感器弧（G23：按固定顺序绘制——startAngle 升序 → maxRange 升序）
         if (showSensors) {
-            u.sensorArray?.forEach { s ->
+            sortedSensorArcs(u.sensorArray).forEach { s ->
                 if (!s.isVisible) return@forEach
                 drawArc(canvas, cx, cy, s.minRange, s.maxRange, s.startAngle, s.arcAngle, headingRad, s.isFilled, s.arcColor, camera)
             }
         }
-        // 武器弧
+        // 武器弧（G23：同传感器固定顺序）
         if (showWeapons) {
-            u.weaponArray?.forEach { w ->
+            sortedWeaponArcs(u.weaponArray).forEach { w ->
                 if (!w.isVisible) return@forEach
                 drawArc(canvas, cx, cy, w.minRange, w.maxRange, w.startAngle, w.arcAngle, headingRad, w.isFilled, w.arcColor, camera)
             }

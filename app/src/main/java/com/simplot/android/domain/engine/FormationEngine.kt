@@ -84,4 +84,138 @@ object FormationEngine {
     /** 场景中所有编队名（去重，保序） */
     fun formationNames(file: ScenarioFile): List<String> =
         file.units.map { it.formationName ?: "" }.filter { it.isNotBlank() }.distinct()
+
+    // ================= G02 编队编辑器：创建/重命名/删除/成员/设中心/类型/距离单位 =================
+
+    /** 队形类型（桌面版 Formations.FormationTypes） */
+    object FormationTypes {
+        const val COLUMN = "Column"                    // 纵队：相对队形轴线
+        const val COMPASS = "RelativeToCompass"        // 罗盘：相对罗盘方位
+        const val COURSE = "RelativeToCourse"          // 航向：相对编队航向
+    }
+
+    /** 距离单位（桌面版 GetEnumDistance：nmi / yards / meters） */
+    object FormationDistanceUnits {
+        const val NMI = "nmi"
+        const val YARDS = "yards"
+        const val METERS = "meters"
+    }
+
+    /**
+     * 队形规格（G02：创建时定义的类型/距离单位）。
+     * 存档层队形由成员单位携带字段（formationName/formationType…），
+     * 空队形仅存于内存注册表（MutableMap），有成员才随存档持久化。
+     */
+    data class FormationSpec(
+        val name: String,
+        val type: String = FormationTypes.COLUMN,
+        val distanceUnit: String = FormationDistanceUnits.NMI
+    )
+
+    /** 注册/更新队形规格（创建或改类型/距离单位） */
+    fun registerFormation(specs: MutableMap<String, FormationSpec>, name: String, type: String, distanceUnit: String): FormationSpec {
+        val spec = FormationSpec(name, type, distanceUnit)
+        specs[name] = spec
+        return spec
+    }
+
+    /** 队形重命名：更新规格键 + 全部成员 formationName。@return 受影响成员数 */
+    fun renameFormation(units: List<Unit>, specs: MutableMap<String, FormationSpec>, oldName: String, newName: String): Int {
+        if (oldName == newName) return 0
+        var count = 0
+        for (u in units) {
+            if (u.formationName == oldName) {
+                u.formationName = newName
+                count++
+            }
+        }
+        specs[oldName]?.let {
+            specs.remove(oldName)
+            specs[newName] = it.copy(name = newName)
+        }
+        return count
+    }
+
+    /** 删除队形：清全部成员队形标志 + 移除规格。@return 受影响成员数 */
+    fun deleteFormation(units: List<Unit>, specs: MutableMap<String, FormationSpec>, name: String): Int {
+        var count = 0
+        for (u in units) {
+            if (u.formationName == name) {
+                removeFromFormation(u)
+                count++
+            }
+        }
+        specs.remove(name)
+        return count
+    }
+
+    /** 设中心：同队形内先清旧中心，再把指定单位设为中心（中心不属于成员）。@return 是否成功 */
+    fun setCenter(units: List<Unit>, formationName: String, unitId: String): Boolean {
+        if (units.none { it.idNum == unitId && it.formationName == formationName }) return false
+        for (u in units) {
+            if (u.formationName == formationName && u.isFormationCenter == true) u.isFormationCenter = null
+        }
+        val target = units.first { it.idNum == unitId }
+        target.isFormationCenter = true
+        target.isInFormation = null
+        return true
+    }
+
+    /**
+     * 添加成员：设置队形标志 + 默认方位/距离（0° 正前方、1 海里，桌面版 AddUnit 落位默认值）。
+     * 已有方位/距离值保留（单位从旧编队转来时不清空）。
+     */
+    fun addMember(u: Unit, formationName: String, type: String = FormationTypes.COLUMN) {
+        u.formationName = formationName
+        u.formationType = type
+        u.isFormationCenter = null
+        u.isInFormation = true
+        if (u.formationBearing == null) u.formationBearing = 0
+        if (u.formationDistance == null) u.formationDistance = 100000  // 1 海里（文件单位 海里×100000）
+    }
+
+    /** 移除成员：清全部队形字段（桌面版 RemoveUnitFromFormation） */
+    fun removeMember(u: Unit) {
+        removeFromFormation(u)
+        u.formationType = null
+        u.formationBearing = null
+        u.formationDistance = null
+    }
+
+    /** 队形类型：以任一同编队成员 formationType 为准（规格缺失时回退），无则 null */
+    fun typeOf(units: List<Unit>, formationName: String): String? =
+        units.firstOrNull { it.formationName == formationName && !it.formationType.isNullOrBlank() }?.formationType
+
+    /** 修改队形类型：规格 + 全部成员 formationType 同步。@return 更新成员数 */
+    fun setType(units: List<Unit>, specs: MutableMap<String, FormationSpec>, name: String, type: String): Int {
+        var count = 0
+        for (u in units) {
+            if (u.formationName == name && u.formationType != type) {
+                u.formationType = type
+                count++
+            }
+        }
+        specs[name]?.let { specs[name] = it.copy(type = type) }
+        return count
+    }
+
+    /** 修改距离单位（仅规格，供显示层换算） */
+    fun setDistanceUnit(specs: MutableMap<String, FormationSpec>, name: String, unit: String) {
+        specs[name]?.let { specs[name] = it.copy(distanceUnit = unit) }
+    }
+
+    /** 成员罗盘方位（度，0=北 顺时针；formationBearing 为 ×1000 定点） */
+    fun bearingDeg(u: Unit): Double? = u.formationBearing?.div(1000.0)
+
+    /** 成员距离换算为指定单位显示值（文件单位 = 海里×100000；1 海里 = 2025.37 码 = 1852 米） */
+    fun distanceValue(u: Unit, unit: String = FormationDistanceUnits.NMI): Double? {
+        val fileUnit = u.formationDistance ?: return null
+        val nmi = fileUnit / 100000.0
+        return when (unit) {
+            FormationDistanceUnits.NMI -> nmi
+            FormationDistanceUnits.YARDS -> nmi * 2025.37
+            FormationDistanceUnits.METERS -> nmi * 1852.0
+            else -> nmi
+        }
+    }
 }

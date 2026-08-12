@@ -40,8 +40,10 @@ fun TurnControlBar(
     onIntervalSet: ((minutes: Int, seconds: Int) -> Unit)? = null
 ) {
     // 回合时长编辑状态（分钟/秒）
-    var minutesText by remember { mutableStateOf(file.time.currentTurnInterval.minutes.toString()) }
-    var secondsText by remember { mutableStateOf(file.time.currentTurnInterval.seconds.toString()) }
+    // G69（R-P3.9）：remember 补 file key——切场景后输入框重置为新场景的回合时长，
+    // 避免保留上一场景的旧值（回合推进为同 file 原地变更，不影响编辑态保持）。
+    var minutesText by remember(file) { mutableStateOf(file.time.currentTurnInterval.minutes.toString()) }
+    var secondsText by remember(file) { mutableStateOf(file.time.currentTurnInterval.seconds.toString()) }
 
     @Suppress("UNUSED_EXPRESSION") tick
     val state = TurnState.detect(file)

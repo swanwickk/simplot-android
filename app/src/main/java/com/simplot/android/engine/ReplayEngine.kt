@@ -19,6 +19,18 @@ import java.time.LocalDateTime
  */
 object ReplayEngine {
 
+    /**
+     * G64/N7 哨兵澄清（对照桌面存档对齐值）：
+     * - 未删除哨兵 = "2020-01-01 00:00:00"（PositionTimeDeleted 的默认值，P1-1 与桌面存档对齐；
+     *   空串同理）—— 单位从未被删除，回放全程显示。
+     * - 远期哨兵 = 2999 年起（感知 PositionTimeEnd 用 "2999-12-31 00:00:00" 表示"永不失效"）——
+     *   删除时间在 2999 年视为永不删除。
+     * 此前用 startsWith("2020-01-01") 前缀匹配当哨兵，会把"2020-01-01 12:00:00"这类
+     * 真实删除时间误判为未删除 → 该时刻删除的单位回放不隐藏。修正为完整语义比较。
+     */
+    private val SENTINEL_NOT_DELETED: LocalDateTime = LocalDateTime.of(2020, 1, 1, 0, 0, 0)
+    private val SENTINEL_END_OF_TIME: LocalDateTime = LocalDateTime.of(2999, 1, 1, 0, 0, 0)
+
     /** 回放帧：某时刻各单位的位置 */
     data class Frame(
         val time: String,                                   // 时刻（存档时间格式）
@@ -88,8 +100,8 @@ object ReplayEngine {
                 if (target.isBefore(created)) return null
             } catch (e: Exception) { /* 解析失败容忍 */ }
         }
-        // E7：删除后不显示（PositionTimeDeleted 为哨兵值时不生效）
-        if (u.positionTimeDeleted.isNotBlank() && !u.positionTimeDeleted.startsWith("2999") && !u.positionTimeDeleted.startsWith("2020-01-01")) {
+        // E7/G64：删除后不显示（哨兵值 = 未删除/永不失效，不生效）
+        if (u.positionTimeDeleted.isNotBlank() && !isNotDeletedSentinel(u.positionTimeDeleted)) {
             try {
                 val deleted = TimeUtil.parse(u.positionTimeDeleted)
                 if (!target.isBefore(deleted)) return null
@@ -116,6 +128,17 @@ object ReplayEngine {
         }
         val b = best ?: return UnitPos(u.idNum, u.side, u.name, u.x, u.y)
         return UnitPos(u.idNum, u.side, u.name, b.x, b.y)
+    }
+
+    /** 删除时间是否为"未删除/永不失效"哨兵（空串、2020-01-01 默认值、2999 远期值）；解析失败视为非哨兵 */
+    private fun isNotDeletedSentinel(v: String): Boolean {
+        if (v.isBlank()) return true
+        return try {
+            val d = TimeUtil.parse(v)
+            d == SENTINEL_NOT_DELETED || !d.isBefore(SENTINEL_END_OF_TIME)
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /** 时间字符串转可排序键（字符串格式即字典序一致） */

@@ -24,12 +24,19 @@ object TurnState {
 
     enum class State { DO_BEFORE, DO_AFTER, DO_NEXT }
 
+    /**
+     * 时间字符串语义相等比较（E11 修复：统一走 [TimeUtil.equal] 解析比较，
+     * 容忍跨格式存档差异；空白-空白保持相等，兼容空时间存档的原 == 门禁语义）。
+     */
+    private fun sameTime(a: String, b: String): Boolean =
+        (a.isBlank() && b.isBlank()) || TimeUtil.equal(a, b)
+
     fun detect(file: ScenarioFile): State {
         val tt = file.time.currentTurnTime
         val pt = file.time.currentPositionTime
         val hasWp = file.units.any { it.pastWaypointArray.isNotEmpty() }
         return when {
-            tt == pt -> if (hasWp) State.DO_NEXT else State.DO_BEFORE
+            sameTime(tt, pt) -> if (hasWp) State.DO_NEXT else State.DO_BEFORE
             else -> State.DO_AFTER
         }
     }
@@ -71,7 +78,7 @@ object TurnState {
     fun confirmNext(file: ScenarioFile, interval: TurnInterval) {
         val pt = file.time.currentPositionTime
         file.time.currentTurnTime = pt
-        val exists = file.turns.any { it.turnTime == pt }
+        val exists = file.turns.any { sameTime(it.turnTime, pt) }
         if (!exists) {
             file.turns.add(Turn(turnTime = pt, turnInterval = TurnInterval(interval.minutes, interval.seconds)))
         }
@@ -103,7 +110,7 @@ object TurnState {
             file.objects.addAll(snap)
         }
         // 移除刚确认回合（TurnTime == 回退前 PositionTime）的 Turns 记录
-        file.turns.removeAll { it.turnTime == ptBefore }
+        file.turns.removeAll { sameTime(it.turnTime, ptBefore) }
         file.undoSnapshot = null
         file.undoObjects = null
     }

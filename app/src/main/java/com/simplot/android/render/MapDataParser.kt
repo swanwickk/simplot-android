@@ -1,6 +1,7 @@
 package com.simplot.android.render
 
 import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlin.math.roundToLong
@@ -8,12 +9,21 @@ import kotlin.math.roundToLong
 /**
  * 地图配置解析器（纯 Kotlin，无 Android 依赖 → 可纯 JVM 单测）。
  *
- * 解析官方 MapMaker JSON（实测 Iron Bottom Sound JJWS1.json）：
+ * 解析官方 MapMaker JSON（实测 Iron Bottom Sound JJWS1.json），支持两套变体键：
+ * - NewMap 键（MapMaker 编辑格式）：BoundaryRect + Land Polygons / Misc Polygons /
+ *   Misc Labels / Water Labels / City Labels / Country Labels / Depth Polygons / Border Polys
+ * - MercatorPolygon 键（G49，官方矢量地图发布格式）：Scale + Width/Height（无 BoundaryRect
+ *   时推算范围）+ Countries / Cities / Waters / Land / Borders / Depths / Depth Labels
  * - BoundaryRect: {Left, Top, Width, Height} —— 地图世界范围
  *   ⚠️ 地图坐标为 海里×10000，存档坐标为 海里×100000 → 解析时 ×10 转存档坐标
  * - Land Polygons / Misc Polygons / Depth Polygons / Border Polys: Path=[x1,y1,x2,y2,...]
  * - Misc/Water/City/Country Labels: {Name, X, Y}
  * - BackgroundFileName: 背景图文件名
+ *
+ * G49 坐标约定：MercatorPolygon 变体的 SimPlotX/SimPlotY 与 Path 点同属"地图坐标
+ * （海里×10000）"，与 BoundaryRect 一致 → 统一 ×10 转存档坐标（读现有 parser 比例尺
+ * 约定确认：桌面 MercatorPolygon.LoadMapData 直接读 SimPlotX/Y，不做像素换算，只有
+ * 光栅 MercatorRaster 才做 像素÷Scale；Scale 键对矢量地图仅作记录）。
  *
  * 产出纯数据（点列表），绘制层（MapPainter）负责转屏幕坐标。
  */
@@ -30,6 +40,9 @@ class MapDataParser {
     var mapWorldMinX = 0L
     var mapWorldMinY = 0L
 
+    /** 矢量地图比例尺（MercatorPolygon/NewMap "Scale" 键原样保存；矢量坐标已含换算，仅记录） */
+    var mapScale: Double = 0.0
+
     /** 陆地多边形（存档坐标点列表） */
     val landPolys = mutableListOf<List<Pair<Long, Long>>>()
 
@@ -45,6 +58,9 @@ class MapDataParser {
     /** 城市 (text, x, y) */
     val cityLabels = mutableListOf<Triple<String, Long, Long>>()
 
+    /** 城市标注锚点（MercatorPolygon "Position"："Above Right" 等；与 cityLabels 按索引对齐，空串=默认） */
+    val cityPositions = mutableListOf<String>()
+
     /** 国家名 (text, x, y) */
     val countryLabels = mutableListOf<Triple<String, Long, Long>>()
 
@@ -56,6 +72,9 @@ class MapDataParser {
 
     /** 深度标签字符串 */
     val depthTexts = mutableListOf<String>()
+
+    /** 水域是否主要（MercatorPolygon "IsMajor"；与 waterLabels 按索引对齐） */
+    val waterIsMajor = mutableListOf<Boolean>()
 
     /** 待加载背景图文件名（官方配置） */
     var pendingBackgroundName: String? = null
@@ -69,9 +88,24 @@ class MapDataParser {
         }
         clear()
         parseBoundary(root)
+        // G49：MercatorPolygon 变体 —— Scale / Width / Height（无 BoundaryRect 时推算范围）
+        root.get("Scale")?.takeIf { it.isJsonPrimitive }?.let { mapScale = it.asDouble }
+        if (!hasBoundary) {
+            val w = numOrNull(root.get("Width"))
+            val h = numOrNull(root.get("Height"))
+            if (w != null && w > 0 && h != null && h > 0) {
+                // 桌面 CalcBoundary(width, height)：Left=0, Top=Height, Width=Width, Height=Height
+                // → 地图覆盖 [0..Width]×[0..Height]（地图单位），存档坐标 [0..W×10]×[0..H×10]
+                boundaryLeft = 0; boundaryTop = h; boundaryWidth = w; boundaryHeight = h
+                hasBoundary = true
+                mapWorldMinX = 0
+                mapWorldMinY = 0
+            }
+        }
         root.get("BackgroundFileName")?.takeIf { !it.isJsonNull }?.let {
             pendingBackgroundName = it.asString
         }
+        // ---- 旧版 NewMap 键（保持兼容，缺变体键的老文件不崩、行为回退） ----
         parsePolygons(root.getAsJsonArray("Land Polygons")) { pts, idx -> landPolys.add(pts) }
         parsePolygons(root.getAsJsonArray("Misc Polygons")) { pts, idx -> miscPolys.add(pts to idx) }
         parseLabelArray(root.getAsJsonArray("Misc Labels"), labels)
@@ -93,14 +127,27 @@ class MapDataParser {
             val pathArr = el.asJsonObject.getAsJsonArray("Path") ?: return@forEach
             borderPolys.add(pointsFromArray(pathArr))
         }
+        // ---- G49：MercatorPolygon 变体键（Countries/Cities/Waters/Land/Borders/Depths） ----
+        parseCountries(root.getAsJsonArray("Countries"))
+        parseCities(root.getAsJsonArray("Cities"))
+        parseWaters(root.getAsJsonArray("Waters"))
+        root.getAsJsonArray("Land")?.forEach { el ->
+            parsePolyObject(el, "Land") { pts -> landPolys.add(pts) }
+        }
+        root.getAsJsonArray("Borders")?.forEach { el ->
+            parsePolyObject(el, "Borders") { pts -> borderPolys.add(pts) }
+        }
+        root.getAsJsonArray("Depths")?.forEach { el -> parseDepthObject(el) }
     }
 
     fun clear() {
         boundaryLeft = 0; boundaryTop = 0; boundaryWidth = 0; boundaryHeight = 0
         hasBoundary = false
         mapWorldMinX = 0; mapWorldMinY = 0
+        mapScale = 0.0
         landPolys.clear(); miscPolys.clear(); labels.clear()
         waterLabels.clear(); cityLabels.clear(); countryLabels.clear()
+        cityPositions.clear(); waterIsMajor.clear()
         depthPolys.clear(); borderPolys.clear(); depthTexts.clear()
         pendingBackgroundName = null
     }
@@ -151,10 +198,10 @@ class MapDataParser {
 
     private fun parseBoundary(root: JsonObject) {
         root.getAsJsonObject("BoundaryRect")?.let { b ->
-            boundaryLeft = b.get("Left")?.asLong ?: 0L
-            boundaryTop = b.get("Top")?.asLong ?: 0L
-            boundaryWidth = b.get("Width")?.asLong ?: 0L
-            boundaryHeight = b.get("Height")?.asLong ?: 0L
+            boundaryLeft = numOrNull(b.get("Left")) ?: 0L
+            boundaryTop = numOrNull(b.get("Top")) ?: 0L
+            boundaryWidth = numOrNull(b.get("Width")) ?: 0L
+            boundaryHeight = numOrNull(b.get("Height")) ?: 0L
             if (boundaryWidth > 0 && boundaryHeight > 0) {
                 hasBoundary = true
                 mapWorldMinX = boundaryLeft * 10
@@ -169,9 +216,123 @@ class MapDataParser {
             if (!el.isJsonObject) return@forEach
             val o = el.asJsonObject
             val name = o.get("Name")?.asString ?: return@forEach
-            val x = (o.get("X")?.asLong ?: 0L) * 10
-            val y = (o.get("Y")?.asLong ?: 0L) * 10
+            val x = (numOrNull(o.get("X")) ?: 0L) * 10
+            val y = (numOrNull(o.get("Y")) ?: 0L) * 10
             sink.add(Triple(name, x, y))
+        }
+    }
+
+    // ============ G49：MercatorPolygon 变体解析 ============
+
+    /** Countries: [{Name, SimPlotX, SimPlotY}]（坐标同 BoundaryRect 体系，×10 转存档坐标） */
+    private fun parseCountries(arr: JsonArray?) {
+        if (arr == null) return
+        arr.forEach { el ->
+            if (!el.isJsonObject) return@forEach
+            val o = el.asJsonObject
+            val name = o.get("Name")?.takeIf { !it.isJsonNull }?.asString ?: return@forEach
+            val x = (numOrNull(o.get("SimPlotX")) ?: 0L) * 10
+            val y = (numOrNull(o.get("SimPlotY")) ?: 0L) * 10
+            countryLabels.add(Triple(name, x, y))
+        }
+    }
+
+    /** Cities: [{Name, SimPlotX, SimPlotY, Position("Above Right")}]；Position 记录锚点供绘制偏移 */
+    private fun parseCities(arr: JsonArray?) {
+        if (arr == null) return
+        arr.forEach { el ->
+            if (!el.isJsonObject) return@forEach
+            val o = el.asJsonObject
+            val name = o.get("Name")?.takeIf { !it.isJsonNull }?.asString ?: return@forEach
+            val x = (numOrNull(o.get("SimPlotX")) ?: 0L) * 10
+            val y = (numOrNull(o.get("SimPlotY")) ?: 0L) * 10
+            cityLabels.add(Triple(name, x, y))
+            cityPositions.add(o.get("Position")?.takeIf { !it.isJsonNull }?.asString ?: "")
+        }
+    }
+
+    /** Waters: [{Name, SimPlotX, SimPlotY, IsMajor}]；IsMajor 记录供绘制加粗放大 */
+    private fun parseWaters(arr: JsonArray?) {
+        if (arr == null) return
+        arr.forEach { el ->
+            if (!el.isJsonObject) return@forEach
+            val o = el.asJsonObject
+            val name = o.get("Name")?.takeIf { !it.isJsonNull }?.asString ?: return@forEach
+            val x = (numOrNull(o.get("SimPlotX")) ?: 0L) * 10
+            val y = (numOrNull(o.get("SimPlotY")) ?: 0L) * 10
+            waterLabels.add(Triple(name, x, y))
+            val major = o.get("IsMajor")
+            waterIsMajor.add(major?.isJsonPrimitive == true && major.asJsonPrimitive.isBoolean && major.asBoolean)
+        }
+    }
+
+    /** Land/Borders 元素: {Name?, Path}；Path 支持 JSON 数组或字符串（"x1,y1 x2,y2"） */
+    private fun parsePolyObject(el: JsonElement, key: String, sink: (List<Pair<Long, Long>>) -> Unit) {
+        if (!el.isJsonObject) return
+        val o = el.asJsonObject
+        val path = o.get("Path") ?: return
+        val pts = pointsFromPath(path) ?: return
+        if (pts.isNotEmpty()) sink(pts)
+    }
+
+    /** Depths: [{Id, Depth4, Path}]；级别取 Depth4（0-4；布尔 true=4），回退 DepthLevelIndex（旧格式） */
+    private fun parseDepthObject(el: JsonElement) {
+        if (!el.isJsonObject) return
+        val o = el.asJsonObject
+        val path = o.get("Path") ?: return
+        val pts = pointsFromPath(path) ?: return
+        if (pts.isEmpty()) return
+        depthPolys.add(pts to depthLevelOf(o).coerceIn(0, 4))
+    }
+
+    private fun depthLevelOf(o: JsonObject): Int {
+        o.get("Depth4")?.let { d ->
+            if (d.isJsonPrimitive) {
+                val p = d.asJsonPrimitive
+                if (p.isBoolean) return if (p.asBoolean) 4 else 0
+                return p.asInt
+            }
+        }
+        o.get("DepthLevelIndex")?.let { d ->
+            if (d.isJsonPrimitive && d.asJsonPrimitive.isNumber) return d.asJsonPrimitive.asInt
+        }
+        return 0
+    }
+
+    /** Path 元素 → 点列表：JSON 数组（旧格式）或字符串（MercatorPolygon 格式） */
+    private fun pointsFromPath(el: JsonElement): List<Pair<Long, Long>>? {
+        return when {
+            el.isJsonArray -> pointsFromArray(el.asJsonArray)
+            el.isJsonPrimitive && el.asJsonPrimitive.isString ->
+                pointsFromString(el.asJsonPrimitive.asString)
+            else -> null
+        }
+    }
+
+    /** 字符串 Path："x1,y1 x2,y2"（兼容逗号/分号/空白混合分隔）→ 点列表（×10 转存档坐标，四舍五入） */
+    private fun pointsFromString(s: String): List<Pair<Long, Long>> {
+        val nums = Regex("-?\\d+(?:\\.\\d+)?").findAll(s)
+            .map { it.value.toDouble() }
+            .toList()
+        val pts = mutableListOf<Pair<Long, Long>>()
+        var i = 0
+        while (i + 1 < nums.size) {
+            pts.add((nums[i] * 10).roundToLong() to (nums[i + 1] * 10).roundToLong())
+            i += 2
+        }
+        return pts
+    }
+
+    /** JSON 元素 → Long（容忍 Double/字符串数值；非法返回 null） */
+    private fun numOrNull(el: JsonElement?): Long? {
+        if (el == null || el.isJsonNull) return null
+        return try {
+            if (el.isJsonPrimitive) {
+                val p = el.asJsonPrimitive
+                if (p.isNumber) p.asLong else p.asString.trim().toLongOrNull()
+            } else null
+        } catch (e: Exception) {
+            null
         }
     }
 

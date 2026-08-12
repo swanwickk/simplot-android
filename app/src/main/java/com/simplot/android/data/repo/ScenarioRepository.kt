@@ -186,6 +186,8 @@ class ScenarioRepository(private val context: Context) {
     /**
      * 运动命令导入（桌面版 LoadMoveOrders）：读取 Movement Orders 文件，
      * 按 IdNum 匹配场景单位并恢复其未来航路点（JsonToWaypoint 兼容 12 键）。
+     * G56 合并语义：仅更新文件中出现的单位；未出现的单位保持原状。parse 内含
+     * 航路点键/Number 连续性校验（跨版本乱序文件 → 抛错，写入前即失败，无半导入状态）。
      * @return 已导入航路点的单位 IdNum 列表；找不到匹配单位时该条目跳过
      */
     fun importMovementOrders(uri: Uri, file: ScenarioFile): List<String> {
@@ -200,6 +202,60 @@ class ScenarioRepository(private val context: Context) {
             imported.add(idNum)
         }
         return imported
+    }
+
+    // ============ G55：player_settings.json 与桌面互通（LoadPlayerSettings / SavePlayerSettings） ============
+
+    /**
+     * 读取场景目录内 player_settings.json（桌面 LoadFile → LoadPlayerSettings）。
+     * 文件缺失 / 格式非法 → null（调用方保留本地设置）。
+     */
+    fun loadPlayerSettings(directory: Uri): com.simplot.android.domain.model.PlayerSettings? {
+        val uri = findChild(directory, "player_settings.json") ?: return null
+        return try {
+            com.simplot.android.data.codec.PlayerSettingsCodec.fromDesktopJson(String(readBytes(uri), Charsets.UTF_8))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 回写当前玩家设置到场景目录 player_settings.json（桌面 SavePlayerSettings：
+     * SaveFile / SaveSetupFile / SaveAuto 每次保存都写）。覆盖已存在文件。
+     * 目录不可写时静默失败（设置回写是保存链附属步骤，不阻塞场景存档）。
+     */
+    fun savePlayerSettings(directory: Uri, settings: com.simplot.android.domain.model.PlayerSettings) {
+        try {
+            val uri = childOrCreate(directory, "player_settings.json")
+            val json = com.simplot.android.data.codec.PlayerSettingsCodec.toDesktopJson(settings)
+            writeBytes(uri, json.toByteArray(Charsets.UTF_8))
+        } catch (e: Exception) {
+            // 静默：与桌面 SavePlayerSettings 同语义（附属保存，失败不打断主流程）
+        }
+    }
+
+    // ============ G28：单位级导入导出（桌面 Units → Import Unit / Export Unit） ============
+
+    /**
+     * 导出单单位到目录（桌面 Export Unit）：文件名 "Unit <IdNum>.json"，
+     * 内容 = 单位 JSON 原样（官方 2.3.9 键序，见 UnitFileCodec）。
+     */
+    fun exportUnit(directory: Uri, unit: com.simplot.android.data.model.Unit) {
+        val uri = childOrCreate(directory, "Unit ${unit.idNum}.json")
+        val json = com.simplot.android.data.codec.UnitFileCodec.toJson(unit)
+        writeBytes(uri, json.toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * 导入单单位（桌面 Import Unit）：解析单位 JSON → 合并进场景
+     * （UnitFileCodec.importInto：同 IdNum 原位替换 / 否则追加）。
+     * @return (导入的单位, 是否替换了已有单位)
+     */
+    fun importUnit(uri: Uri, file: com.simplot.android.data.model.ScenarioFile): Pair<com.simplot.android.data.model.Unit, Boolean> {
+        val text = String(readBytes(uri), Charsets.UTF_8).trim()
+        val unit = com.simplot.android.data.codec.UnitFileCodec.fromJson(text)
+        val replaced = com.simplot.android.data.codec.UnitFileCodec.importInto(file, unit)
+        return unit to replaced
     }
 
     /**

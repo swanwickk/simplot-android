@@ -1,7 +1,6 @@
 package com.simplot.android.render
 
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import com.simplot.android.data.model.Unit
 
@@ -9,26 +8,30 @@ import com.simplot.android.data.model.Unit
  * 轨迹/航路点渲染器：
  * - PastWaypointArray 历史轨迹线（桌面 TrackHistory）
  * - R-P2 修复：FutureWaypointArray 未来航路点标记（空心圆 + 序号，颜色按阵营，桌面 ShowWaypoints）
+ *
+ * G09：阵营色走 [UnitRenderer.Palette]（PlayerSettings 蓝/红颜色键驱动），去硬编码。
  */
 object TrackRenderer {
 
-    fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int) {
-        drawPast(canvas, u, camera, canvasW, canvasH)
-        drawFuture(canvas, u, camera, canvasW, canvasH)
+    fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int,
+             palette: UnitRenderer.Palette = UnitRenderer.Palette()) {
+        drawPast(canvas, u, camera, canvasW, canvasH, palette)
+        drawFuture(canvas, u, camera, canvasW, canvasH, palette)
     }
 
-    private fun drawPast(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int) {
+    private fun drawPast(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int,
+                         palette: UnitRenderer.Palette) {
         val past = u.pastWaypointArray
         if (past.isEmpty()) return
 
         val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = UnitRenderer.colorOf(u.side)
+            color = UnitRenderer.colorOf(u.side, palette)
             style = Paint.Style.STROKE
             strokeWidth = 2f
             alpha = 170
         }
         val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = UnitRenderer.colorOf(u.side)
+            color = UnitRenderer.colorOf(u.side, palette)
             style = Paint.Style.FILL
             alpha = 200
         }
@@ -51,11 +54,12 @@ object TrackRenderer {
     }
 
     /** 未来航路点：空心圆 + 序号（桌面版 Waypoint 标记，颜色 GetWaypointColor 阵营色） */
-    private fun drawFuture(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int) {
+    private fun drawFuture(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int,
+                           palette: UnitRenderer.Palette) {
         val future = u.futureWaypointArray
         if (future.isEmpty()) return
 
-        val color = UnitRenderer.colorOf(u.side)
+        val color = UnitRenderer.colorOf(u.side, palette)
         val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
             style = Paint.Style.STROKE

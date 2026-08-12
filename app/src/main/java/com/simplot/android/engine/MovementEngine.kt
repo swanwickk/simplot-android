@@ -254,6 +254,99 @@ object MovementEngine {
         u.speed = (newSpeed * 1000).roundToInt()
     }
 
+    // ============ G15 手动移动控制（桌面版 ContainerMove DoMove/Pause/UndoMove） ============
+
+    /** 手动移动速度档位（桌面版 PopupMoveSpeed：倍率列表，应用在当前航速上） */
+    val MANUAL_MOVE_GEARS = listOf(0.5, 1.0, 2.0, 4.0)
+
+    /** G15：手动移动单步快照（UndoMove 恢复用，纯数据可测） */
+    data class ManualMoveSnapshot(
+        val x: Long,
+        val y: Long,
+        val speed: Int,
+        val course: Int,
+        val range: Int,
+        val pastLen: Int
+    )
+
+    /** G15：捕获单位当前状态为撤销快照（DoMove 前调用） */
+    fun snapshotOf(u: Unit): ManualMoveSnapshot = ManualMoveSnapshot(
+        x = u.x, y = u.y, speed = u.speed, course = u.course,
+        range = u.range, pastLen = u.pastWaypointArray.size
+    )
+
+    /** G15：从快照恢复单位状态（UndoMove；截断本步新增的轨迹点） */
+    fun restoreSnapshot(u: Unit, s: ManualMoveSnapshot) {
+        u.x = s.x
+        u.y = s.y
+        u.speed = s.speed
+        u.course = s.course
+        u.range = s.range
+        while (u.pastWaypointArray.size > s.pastLen) {
+            u.pastWaypointArray.removeAt(u.pastWaypointArray.size - 1)
+        }
+    }
+
+    /**
+     * G15：规划一次手动移动（纯计算，不修改单位；供 UI 缓冲式编辑 / 预览）。
+     * 沿当前航向以 航速×档位 直行 [minutes] 分钟，返回新位置与新 Range（E4 语义）。
+     * @return null 表示不可移动（航速 0 / 距离为 0 / Range 已耗尽）
+     */
+    data class ManualMovePlan(
+        val newX: Long,
+        val newY: Long,
+        val newRange: Int,
+        val distNm: Double
+    )
+
+    fun planManualMove(u: Unit, minutes: Double, gear: Double): ManualMovePlan? {
+        var distNm = u.speedKnots() * gear * minutes / 60.0
+        if (distNm <= 0) return null
+        var newRange = u.range
+        if (u.range >= 0 && !u.ignoreRange) {
+            if (distNm >= u.range) {
+                distNm = u.range.toDouble()
+                newRange = 0
+            } else {
+                newRange = u.range - maxOf(0, distNm.roundToInt())
+            }
+        }
+        val distFile = (distNm * CoordUtil.NMI_SCALE).toLong()
+        if (distFile <= 0) return null
+        val rad = Math.toRadians(u.courseDeg())
+        val nx = u.x + (distFile * sin(rad)).roundToInt().toLong()
+        val ny = u.y + (distFile * cos(rad)).roundToInt().toLong()
+        return ManualMovePlan(nx, ny, newRange, distNm)
+    }
+
+    /**
+     * G15：手动移动一步（桌面版 ContainerMove PushDoMove）。
+     * 沿当前航向以 航速×档位 直行 [minutes] 分钟，记录起点轨迹点并扣减 Range（E4 语义）。
+     * 不推进回合时间、不移动其他单位（桌面版可单独驱动单位移动而不推回合）。
+     * @return 是否发生位移（航速>0 且距离>0）
+     */
+    fun manualMoveStep(u: Unit, minutes: Double, gear: Double, curTime: String): Boolean {
+        var distNm = u.speedKnots() * gear * minutes / 60.0
+        if (distNm <= 0) return false
+        // Range 限制（-100000=无限制；0=已耗尽停止）——与回合引擎 E4 语义一致
+        if (u.range >= 0 && !u.ignoreRange) {
+            if (distNm >= u.range) {
+                distNm = u.range.toDouble()
+                u.range = 0
+            } else {
+                u.range -= maxOf(0, distNm.roundToInt())
+            }
+        }
+        val distFile = (distNm * CoordUtil.NMI_SCALE).toLong()
+        if (distFile <= 0) return false
+        // 记录起点轨迹（移动前位置）——与回合引擎 applyUnitMove 一致
+        u.pastWaypointArray.add(makeWaypoint(u, curTime))
+        val rad = Math.toRadians(u.courseDeg())
+        u.x += (distFile * sin(rad)).roundToInt().toLong()
+        u.y += (distFile * cos(rad)).roundToInt().toLong()
+        return true
+    }
+
     // ============ 参考函数（保留供测试/文档引用；D9 后不再用于主移动路径） ============
 
     data class TurnResult(val x: Long, val y: Long, val turnPoints: List<Pair<Long, Long>>, val actualCourse: Double)
@@ -307,21 +400,7 @@ object MovementEngine {
         return d
     }
 
-    /** 转向次数 n = ceil(|Δ|/45) */
-    fun turnCount(delta: Double): Int = if (abs(delta) >= 0.5) ceil(abs(delta) / 45.0).toInt() else 0
-
-    fun turnLossKnots(u: Unit, emergency: Boolean): Double = 0.0   // D9：桌面版无转向损失
-    fun advanceYards(u: Unit, emergency: Boolean): Double = 0.0    // D9：桌面版无前冲
-
-    fun isSubmerged(u: Unit): Boolean = (u.depth ?: 0) > 0
-
     fun altDepthOf(u: Unit): Int = u.altitude ?: u.depth ?: 0
-
-    /** 75% 加速档判定（D9 后不再用于主路径；保留供测试引用） */
-    fun accelHighLane(u: Unit): Boolean {
-        val max = u.maxSpeedKnots ?: return false
-        return u.speedKnots() > max * 0.75
-    }
 
     private fun makeWaypoint(u: Unit, ts: String): Waypoint {
         return Waypoint(

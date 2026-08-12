@@ -5,6 +5,43 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.6.0] - 2026-08-12
+
+### 大修：桌面版功能复刻 + 存档互通（对照反编译资料 4 批次）
+
+**批次1 止血与高价值小件**
+- G21 TextTags 9 开关补全 + AdditionalText；G30 Show Side 三态视图过滤（All/Blue/Red）
+- G03 护航队对话框补全（航向/航速/列行数/列行间距，ConvoyEngine 网格布局）
+- G40 最终航路点三选弹窗；G61/G67 时间字符串比较修复（TimeUtil.equal 语义一致）
+- G62 TrackNumber 计数器三路径防撞号核验（新建/复制/护航队）
+
+**批次2 核心编辑器补全**
+- G01 新场景创建（场景名+起始时间+地图选择）
+- G02 编队编辑器全功能（创建/重命名/删除、类型三选、距离单位、成员增删、设中心、罗盘预览；FormationDialog 50→284 行）
+- G04 航路点导入（CopyExact/CopyOffset 两模式）；G13 单位编辑补全（名称/类型/阵营/Class/Number/Range/呼叫号）
+- G19 被动方位编辑面板；G29 剪贴板式复制+Paste（防撞号）；G32 Relocate 拖拽移动（航路点实时跟随）
+- G49 MercatorPolygon 矢量地图变体键（Countries/Cities/Waters/Land/Borders/Depths）
+- tagCallsign 存档兼容：桌面 JSON 固定 9 键无独立呼叫号，不落盘、渲染回退 Name（字节级兼容保障）
+
+**批次3 显示定制与互操作**
+- G47 符号集四选（CWS Color Filled/Unfilled/Mono + NTDS）+ G08 符号尺寸档/友军符号/背景开关
+- G09 颜色全量接入渲染（PlayerSettings 6 色键去硬编码）+ 颜色列表编辑/Load/Save/Reset
+- G55 player_settings 桌面互通（读入应用+保存回写）；G25 Save Player Settings 入口
+- G06 导出运动命令单位选择（WindowExportOrders 语义）；G17 比例尺动态数值（1-2-5 序列）
+- G15 手动移动控制（DoMove/Pause/UndoMove 速度档）；G27 地图截图导出 PNG
+- G20 主动传感器开关/G22 Altitude-Depth/G45 BeamWidth/G46 SpeedLeaders 箭头
+- G28 单位级 JSON 导入导出；G65 死代码清理
+
+**批次4 打磨收尾**
+- G05 航路点删除全部；G07 回放首末帧跳转；G10 自动存档开关；G11 错误日志窗口；G23 弧排序
+- G51 队形名绘制核验；G54 存档触发核对；G57 CSV 命名对齐
+- G68 Paint 复用（UnitRenderer/MapRenderer 字段复用，惰性初始化保持 JVM 可测）
+- G69 remember key 补齐
+
+### 验证
+- 311 JUnit 用例 / 50 测试类全绿（大修前 150）
+- assembleDebug 成功（APK 10.6MB）
+
 ## [0.5.2] - 2026-08-11
 
 空中单位显示修复（用户以 Red 存档反馈）。

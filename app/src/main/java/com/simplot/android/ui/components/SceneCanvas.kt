@@ -3,9 +3,10 @@ package com.simplot.android.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,7 +37,7 @@ import kotlin.math.max
  * - 单指拖拽平移
  * - 双指捏合缩放
  * - 轻点选择单位
- * - 长按弹出单位编辑（回调上层）
+ * - 长按单位进入拖拽 Relocate（G32：实时 relocate + 航路点同步平移，替代原长按弹编辑窗）
  * - 回放模式：传入 [replayFrame] 时按帧位置渲染（不响应点选编辑）
  */
 @Composable
@@ -46,7 +47,8 @@ fun SceneCanvas(
     mapRenderer: MapRenderer,
     selectedUnitId: String?,
     onSelect: (String?) -> kotlin.Unit,
-    onLongPress: (Unit) -> kotlin.Unit,
+    onLongPress: (Unit) -> kotlin.Unit = {},
+    onRelocate: (unitId: String, x: Long, y: Long) -> kotlin.Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
     replayFrame: ReplayEngine.Frame? = null,
     tick: Int = 0,
@@ -56,9 +58,15 @@ fun SceneCanvas(
     unitDistances: List<UnitDistance>? = null,
     symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS,
     settings: com.simplot.android.domain.model.PlayerSettings = com.simplot.android.domain.model.PlayerSettings.DEFAULT,
-    miscAnnotations: List<com.simplot.android.domain.model.MiscAnnotation> = emptyList()
+    miscAnnotations: List<com.simplot.android.domain.model.MiscAnnotation> = emptyList(),
+    showSide: com.simplot.android.ui.ShowSide = com.simplot.android.ui.ShowSide.ALL
 ) {
     val replaying = replayFrame != null
+    // G30：Show Side 视图过滤（All/Blue/Red）——仅影响绘制与命中检测，不落盘、不改引擎状态
+    val viewUnits: List<Unit> =
+        if (showSide.sideName == null) file.units else file.units.filter { it.side == showSide.sideName }
+    // G32：当前被长按拖拽的单位 IdNum（非空时 transform 手势禁用地图平移，防单位拖动与地图拖动冲突）
+    var draggingUnitId by remember { mutableStateOf<String?>(null) }
     // 重绘纪元（反馈④）：tick 变化 → LaunchedEffect 快照写；draw 阶段快照读（epoch）→ 必重绘。
     // 修复：revision++ 触发的重组在 compose-ui 1.7.0 下未带动 draw 失效，
     // 通过 draw 内显式快照读保证 epoch 变化即重绘（Do/编辑/复制/护航队/Undo 均覆盖）。
@@ -82,9 +90,10 @@ fun SceneCanvas(
                     }
                 }
             }
-            .pointerInput(measureMode) {
+            .pointerInput(measureMode, showSide) {
                 // Bug 3 修复：测量模式下完全不注册 transform 手势（单指=画线、无地图拖动/缩放）。
                 // measureMode 作为 key：切换时协程取消重启，重新评估（key=Unit 时读到的是陈旧值，C1 的 pan 禁用不生效）。
+                // G30：showSide 作为 key——过滤切换后 hitTest 闭包重新捕获 viewUnits（否则读到陈旧列表）
                 if (measureMode) return@pointerInput
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     // 缩放：以双指中心为锚点（阈值判断，避免浮点噪声吞掉 pan）
@@ -93,13 +102,15 @@ fun SceneCanvas(
                     }
                     // 平移：始终生效（单指拖动 / 双指缩放时跟随）
                     // ⚠️ 测量模式下禁用单指平移（否则拖动画线与地图拖动冲突，C1 修复，双保险）
+                    // G32：单位长按拖拽期间（draggingUnitId 非空）禁用地图平移（防单位拖动与地图拖动冲突）
                     val measuring = measureMode
-                    if (!measuring && (abs(pan.x) > 0.5f || abs(pan.y) > 0.5f)) {
+                    val relocating = draggingUnitId != null
+                    if (!measuring && !relocating && (abs(pan.x) > 0.5f || abs(pan.y) > 0.5f)) {
                         camera.pan(pan.x, pan.y)
                     }
                 }
             }
-            .pointerInput(file, measureMode) {
+            .pointerInput(file, measureMode, showSide) {
                 if (replaying) return@pointerInput   // 回放模式下不响应点选
                 if (measureMode) {
                     // 测量模式（修复 A）：awaitEachGesture 手动实现，轻点（无位移）= 选中单位，拖拽 = 画线。
@@ -131,7 +142,7 @@ fun SceneCanvas(
                         }
                         if (!isDrag) {
                             // 轻点：选中单位（不 consume；空白则 hit=null → onSelect(null) 取消选中）
-                            val hit = hitTest(file.units, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom)
+                            val hit = hitTest(viewUnits, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom)
                             onSelect(hit?.idNum)
                         } else if (completed && start != null && last != null) {
                             // 仅在手势正常完成（非取消）时记录测量线，避免半条线（N1）
@@ -141,17 +152,47 @@ fun SceneCanvas(
                         measureEnd = null
                     }
                 } else {
-                    detectTapGestures(
-                        onTap = { pos ->
-                            // 命中检测：点选单位
-                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt(), camera.zoom)
-                            onSelect(hit?.idNum)
-                        },
-                        onLongPress = { pos ->
-                            val hit = hitTest(file.units, camera, pos, size.width.toInt(), size.height.toInt(), camera.zoom)
-                            if (hit != null) onLongPress(hit)
+                    // G32：长按单位 → 拖拽 Relocate（实时 relocate，替代原「长按弹编辑窗」）；
+                    // 轻点 → 选中；长按空白无动作；拖动期间 draggingUnitId 非空 → transform 禁用地图平移。
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        val hit = hitTest(viewUnits, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom)
+                        if (hit != null) {
+                            // 按下即选中（拖拽中的单位即当前选中，桌面 MouseDrag 语义）
+                            onSelect(hit.idNum)
+                            val longPress = awaitLongPressOrCancellation(down.id)
+                            if (longPress != null) {
+                                draggingUnitId = hit.idNum
+                                try {
+                                    // 长按成立后单指拖动：实时把单位挪到手指世界坐标（revision++ 由上层触发重绘）
+                                    drag(down.id) { change ->
+                                        val (wx, wy) = camera.screenToWorld(change.position.x, change.position.y, size.width, size.height)
+                                        onRelocate(hit.idNum, wx, wy)
+                                        change.consume()
+                                    }
+                                } finally {
+                                    draggingUnitId = null
+                                }
+                            }
+                            // 长按未成立（提前抬起=轻点，已选中；移动超阈值=地图平移，transform 处理）
+                        } else {
+                            // 空白按下：轻点（无位移且未长按）取消选中；拖动平移地图不取消
+                            val longPress = awaitLongPressOrCancellation(down.id)
+                            if (longPress == null) {
+                                val up = waitForUpOrCancellation()
+                                if (up != null) {
+                                    val dx = up.position.x - down.position.x
+                                    val dy = up.position.y - down.position.y
+                                    if (dx * dx + dy * dy < viewConfiguration.touchSlop * viewConfiguration.touchSlop) {
+                                        onSelect(null)
+                                    }
+                                }
+                            } else {
+                                // 长按空白无动作：等待手势结束（期间 transform 手势可平移地图）
+                                waitForUpOrCancellation()
+                            }
                         }
-                    )
+                    }
                 }
             }
     ) {
@@ -167,28 +208,31 @@ fun SceneCanvas(
         // 地图贴图（如有）
         mapRenderer.drawBitmap(drawContext.canvas.nativeCanvas, camera, w, h)
 
-        // 陆地/覆盖多边形 + 标注（官方地图；R4：城市/国家/水域/深度开关接线）
+        // 陆地/覆盖多边形 + 标注（官方地图；R4：城市/国家/水域/深度开关接线；G09：颜色读 PlayerSettings）
         mapRenderer.drawPolygons(
             drawContext.canvas.nativeCanvas, camera, w, h,
             showCities = settings.showCities, showCountries = settings.showCountries,
-            showWaters = settings.showWaters, showDepths = settings.showDepths
+            showWaters = settings.showWaters, showDepths = settings.showDepths,
+            landColor = settings.mapLandColor, oceanColor = settings.mapOceanColor,
+            redForColor = settings.redForColor
         )
 
-        // 网格（R4：ShowGrid 开关）
+        // 网格（R4：ShowGrid 开关；G09：网格色读 settings.gridColor）
         if (settings.showGrid) {
-            mapRenderer.drawGrid(drawContext.canvas.nativeCanvas, camera, w, h)
+            mapRenderer.drawGrid(drawContext.canvas.nativeCanvas, camera, w, h, gridColor = settings.gridColor)
         }
 
         // 轨迹（R4：ShowWaypoints 关时不画轨迹线）
         if (settings.showWaypoints) {
-            for (u in file.units) {
-                TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h)
+            val trackPalette = UnitRenderer.paletteOf(settings)
+            for (u in viewUnits) {
+                TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, palette = trackPalette)
             }
         }
 
         // 传感器/武器射程弧（在单位下方绘制；R4：ShowSensors/ShowWeapons 开关）
         if (!replaying) {
-            for (u in file.units) {
+            for (u in viewUnits) {
                 ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, settings.showSensors, settings.showWeapons)
                 // 被动方位线（R4：ShowSonar / ShowEs 开关）
                 com.simplot.android.render.BearingRenderer.draw(
@@ -200,7 +244,7 @@ fun SceneCanvas(
 
         // 编队连线（桌面版 ShowFormations）：同编队成员与中心连线（细灰线）
         if (settings.showFormations) {
-            drawFormationLines(drawContext.canvas.nativeCanvas, file.units, camera, w, h)
+            drawFormationLines(drawContext.canvas.nativeCanvas, viewUnits, camera, w, h)
         }
 
         // Misc 标注（R7：桌面版 MiscBox/Oval/Line/Polygon/Label，Overlay 层）
@@ -213,28 +257,43 @@ fun SceneCanvas(
         // 单位：回放模式用帧位置；正常模式用实时位置
         if (replaying && replayFrame != null) {
             val posById = replayFrame.positions
-            for (u in file.units) {
+            for (u in viewUnits) {
                 val pos = posById[u.idNum] ?: continue
                 val (sx, sy) = camera.worldToScreen(pos.x, pos.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     val frameUnit = u.copy(x = pos.x, y = pos.y)
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy,
-                        sizePx = UnitRenderer.iconSizePx(camera.zoom), symbolStyle = symbolStyle,
-                        showSpeedLeader = settings.showSpeedLeaders)
+                        sizePx = UnitRenderer.iconSizePx(camera.zoom) * settings.symbolSize.scale,
+                        symbolStyle = symbolStyle, symbolSet = settings.symbolSet,
+                        ww2Mode = settings.ww2Symbols, sizeLevel = settings.symbolSize,
+                        showSpeedLeader = settings.showSpeedLeaders,
+                        palette = UnitRenderer.paletteOf(settings),
+                        friendlySymbols = settings.showFriendlySymbols)
                     if (settings.showLabels) {
-                        drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom)
+                        drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom,
+                            useLabelBackground = settings.useLabelBackground,
+                            backgroundColor = settings.backgroundColor,
+                            palette = UnitRenderer.paletteOf(settings))
                     }
                 }
             }
         } else {
-            for (u in file.units) {
+            for (u in viewUnits) {
                 val (sx, sy) = camera.worldToScreen(u.x, u.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, u, sx, sy,
-                        sizePx = UnitRenderer.iconSizePx(camera.zoom), selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle,
-                        showSpeedLeader = settings.showSpeedLeaders)
+                        sizePx = UnitRenderer.iconSizePx(camera.zoom) * settings.symbolSize.scale,
+                        selected = u.idNum == selectedUnitId, symbolStyle = symbolStyle,
+                        symbolSet = settings.symbolSet, ww2Mode = settings.ww2Symbols,
+                        sizeLevel = settings.symbolSize,
+                        showSpeedLeader = settings.showSpeedLeaders,
+                        palette = UnitRenderer.paletteOf(settings),
+                        friendlySymbols = settings.showFriendlySymbols)
                     if (settings.showLabels) {
-                        drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom)
+                        drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom,
+                            useLabelBackground = settings.useLabelBackground,
+                            backgroundColor = settings.backgroundColor,
+                            palette = UnitRenderer.paletteOf(settings))
                     }
                 }
             }
@@ -298,9 +357,9 @@ fun SceneCanvas(
             drawMeasureLine(nc, camera, w, h, ms, me, saved = false)
         }
 
-        // 坐标比例尺条（右下角；R4：ShowScaleBar 开关）
+        // 坐标比例尺条（右下角；R4：ShowScaleBar 开关；G17：数值随 zoom 动态计算）
         if (settings.showScaleBar) {
-            drawScaleBar(drawContext.canvas.nativeCanvas, w, h)
+            drawScaleBar(drawContext.canvas.nativeCanvas, camera, w, h)
         }
     }
 }
@@ -347,8 +406,17 @@ private fun drawMeasureLine(
     canvas.drawText(label, midX, midY, fillPaint)
 }
 
-/** 标签绘制（名称 + 航向航速）：字号与锚点偏移随 zoom 等比缩放（Bug 2 / 反馈⑥） */
-private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, sy: Float, zoom: Float) {
+/**
+ * 标签绘制（名称 + 航向航速）：字号与锚点偏移随 zoom 等比缩放（Bug 2 / 反馈⑥）。
+ * G08/G09：CheckBackground（"Use background color under labels"）开启时在文字下垫背景色矩形；
+ * 文字颜色走 PlayerSettings 蓝/红键（palette）。
+ */
+private fun drawUnitLabel(
+    canvas: android.graphics.Canvas, u: Unit, sx: Float, sy: Float, zoom: Float,
+    useLabelBackground: Boolean = true,
+    backgroundColor: Long = 0xFFF0F2F5,
+    palette: UnitRenderer.Palette = UnitRenderer.Palette()
+) {
     val tag = u.textTags
     // R7 修复：按桌面版 9 项 TagXxx 开关拼装（桌面 Create*Tag 格式串）；
     // 无任何开关开启时不画
@@ -356,7 +424,7 @@ private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, s
         !tag.tagAltitude && !tag.tagDepth && !tag.tagCallsign && tag.additionalText.isBlank()) return
     val k = UnitRenderer.labelScaleK(zoom)
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = UnitRenderer.colorOf(u.side)
+        color = UnitRenderer.colorOf(u.side, palette)
         textSize = UnitRenderer.labelTextSize(zoom)
     }
     val parts = mutableListOf<String>()
@@ -374,11 +442,24 @@ private fun drawUnitLabel(canvas: android.graphics.Canvas, u: Unit, sx: Float, s
     if (tag.additionalText.isNotBlank()) parts.add(tag.additionalText)
     val text = parts.joinToString("  ")
     if (text.isNotEmpty()) {
-        canvas.drawText(text, sx + 10f * k, sy - 8f * k, paint)
+        val tx = sx + 10f * k
+        val ty = sy - 8f * k
+        // G08：CheckBackground —— 文字下垫背景色矩形（桌面签名："Use background color under labels"）
+        if (useLabelBackground) {
+            val tw = paint.measureText(text)
+            val bg = android.graphics.Paint().apply {
+                color = backgroundColor.toInt()
+                style = android.graphics.Paint.Style.FILL
+            }
+            canvas.drawRect(tx - 4f, ty - paint.textSize + 2f, tx + tw + 4f, ty + 3f, bg)
+        }
+        canvas.drawText(text, tx, ty, paint)
     }
 }
 
-/** 编队连线：同编队成员 ↔ 中心（细灰线，桌面版 ShowFormations） */
+/** 编队连线：同编队成员 ↔ 中心（细灰线，桌面版 ShowFormations）。
+ *  G51：队形名标签（桌面版 SymbolGenerator.TextTags.DrawFormationName）——
+ *  在编队中心单位上方绘制 formationName，阵营色 + 黑描边，随 zoom 缩放。 */
 private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit>, camera: Camera, w: Int, h: Int) {
     val groups = units.filter { it.isInFormation == true || it.isFormationCenter == true }
         .groupBy { it.formationName ?: "" }
@@ -388,7 +469,7 @@ private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit
         style = android.graphics.Paint.Style.STROKE
         strokeWidth = 1f
     }
-    for ((_, members) in groups) {
+    for ((name, members) in groups) {
         val center = members.firstOrNull { it.isFormationCenter == true } ?: members.firstOrNull() ?: continue
         val (cx, cy) = camera.worldToScreen(center.x, center.y, w, h)
         for (m in members) {
@@ -396,12 +477,48 @@ private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit
             val (sx, sy) = camera.worldToScreen(m.x, m.y, w, h)
             canvas.drawLine(cx, cy, sx, sy, linePaint)
         }
+        // G51：队形名标签（桌面 DrawFormationName：编队名显示在画布上）
+        if (name.isNotBlank()) {
+            drawFormationNameLabel(canvas, name, center, cx, cy, camera.zoom)
+        }
     }
 }
 
-/** 右下角比例尺条：50 海里示意（白线 + 两端竖线刻度 + 实心白字黑描边） */
-private fun drawScaleBar(canvas: android.graphics.Canvas, w: Int, h: Int) {
-    val x0 = w - 90f
+/**
+ * G51：队形名标签绘制（桌面版 TextTags.DrawFormationName 语义）。
+ * 白底可读性两遍画法（黑描边 + 阵营色填充，同测量/单位标签风格），
+ * 字号与锚点偏移随 zoom 等比缩放（与 drawUnitLabel 同一套系数）。
+ */
+private fun drawFormationNameLabel(
+    canvas: android.graphics.Canvas, name: String, center: Unit,
+    cx: Float, cy: Float, zoom: Float
+) {
+    val k = UnitRenderer.labelScaleK(zoom)
+    val ty = cy - 18f * k
+    // 越界跳过（视口外 ±200px 缓冲）
+    if (cx < -200f || cx > canvas.width + 200f || ty < -200f || ty > canvas.height + 200f) return
+    val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = UnitRenderer.colorOf(center.side)
+        textSize = UnitRenderer.labelTextSize(zoom)
+        textAlign = android.graphics.Paint.Align.CENTER
+    }
+    val outline = android.graphics.Paint(fill).apply {
+        color = android.graphics.Color.BLACK
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 3f
+    }
+    canvas.drawText(name, cx, ty, outline)
+    canvas.drawText(name, cx, ty, fill)
+}
+
+/**
+ * G17：右下角比例尺条（动态数值，随 zoom 变化；桌面版 ContainerScalebar）。
+ * 数值与像素长度由 [com.simplot.android.render.ScaleBar] 按 1-2-5 序列取整计算
+ * （1 海里 = 100000 世界单位 × zoom = 屏幕像素），右对齐，白线 + 两端竖线刻度 + 实心白字黑描边。
+ */
+private fun drawScaleBar(canvas: android.graphics.Canvas, camera: Camera, w: Int, h: Int) {
+    val (nmi, px) = com.simplot.android.render.ScaleBar.compute(camera.zoom, 100f)
+    val x0 = w - px - 20f
     val y0 = h - 30f
     // 线条：白色实线 + 两端竖线刻度（与文字 paint 分离，不复用 STROKE 样式画字）
     val linePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
@@ -409,10 +526,11 @@ private fun drawScaleBar(canvas: android.graphics.Canvas, w: Int, h: Int) {
         style = android.graphics.Paint.Style.STROKE
         strokeWidth = 2.5f
     }
-    canvas.drawLine(x0, y0, x0 + 70f, y0, linePaint)
+    canvas.drawLine(x0, y0, x0 + px, y0, linePaint)
     canvas.drawLine(x0, y0 - 6f, x0, y0 + 6f, linePaint)
-    canvas.drawLine(x0 + 70f, y0 - 6f, x0 + 70f, y0 + 6f, linePaint)
+    canvas.drawLine(x0 + px, y0 - 6f, x0 + px, y0 + 6f, linePaint)
     // 文字：白字 + 黑描边两遍画法（FILL 实心字，显式 textSize）
+    val label = com.simplot.android.render.ScaleBar.label(nmi)
     val strokePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.BLACK
         style = android.graphics.Paint.Style.STROKE
@@ -423,8 +541,8 @@ private fun drawScaleBar(canvas: android.graphics.Canvas, w: Int, h: Int) {
         color = android.graphics.Color.WHITE
         textSize = 20f
     }
-    canvas.drawText("50 nmi", x0, y0 - 8f, strokePaint)
-    canvas.drawText("50 nmi", x0, y0 - 8f, fillPaint)
+    canvas.drawText(label, x0, y0 - 8f, strokePaint)
+    canvas.drawText(label, x0, y0 - 8f, fillPaint)
 }
 
 /** 命中检测：返回被点中的单位（若有）。hitRadius 随 zoom 放大（契约7：与图标尺寸同链路，放大后易选中） */

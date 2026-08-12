@@ -20,8 +20,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,7 +48,7 @@ fun UnitEditSheet(
     onApply: (Unit) -> kotlin.Unit,
     onDelete: (Unit) -> kotlin.Unit,
     onShowAsSunk: (Unit) -> kotlin.Unit = {},
-    onDuplicate: (Unit) -> kotlin.Unit = {},
+    onCopy: (Unit) -> kotlin.Unit = {},
     onDismiss: () -> kotlin.Unit
 ) {
     // 反馈⑨：航向/航速纯数字输入（去掉滑杆；文本与数值双向同步，非法输入保留上次有效值）
@@ -59,15 +61,46 @@ fun UnitEditSheet(
     // R-P2：X/Y 编辑（桌面版各单位窗口有 X/Y 字段，替代无 Relocate 时的位置调整）
     var xText by remember { mutableStateOf(unit.x.toString()) }
     var yText by remember { mutableStateOf(unit.y.toString()) }
+    // G13：身份/类型/阵营/航程/呼叫号编辑（桌面版 ContainerIdClass：TextName/TextClass/TextNumber/PopupSide/PopupUnitType）
+    var name by remember { mutableStateOf(unit.name) }
+    var unitClass by remember { mutableStateOf(unit.unitClass) }
+    var numberText by remember { mutableStateOf(unit.number.toString()) }
+    var side by remember { mutableStateOf(unit.side) }
+    var rangeText by remember { mutableStateOf(if (unit.range == -100000) "-100000" else unit.range.toString()) }
+    var callsign by remember { mutableStateOf(unit.textTags.callsign) }
+    // 类型大类（Domain）与子类型：改类型联动重新判定 Domain 显示区（高度/深度输入、参考点判定等）
+    val registry = com.simplot.android.domain.registry.UnitTypeRegistry
+    var editDomain: com.simplot.android.domain.registry.UnitTypeRegistry.Domain by remember {
+        mutableStateOf(registry.domainOf(unit))
+    }
+    var type by remember { mutableStateOf(unit.unitType) }
+    // G19：被动方位编辑（增删/编辑，桌面版 PassiveBearings 面板）
+    var bearings: List<com.simplot.android.data.model.PassiveBearing> by remember {
+        mutableStateOf(unit.passiveBearingArray?.map { it.copy() } ?: emptyList())
+    }
+    var bearingsDirty by remember { mutableStateOf(false) }
     // 删除三选弹窗状态（R-P2：桌面 DeleteUnit 确认 Remove/Show as Sunk/Cancel）
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    // R9：Domain 判定（参考点无航向航速；浮标显示深度）
-    val domain = com.simplot.android.domain.registry.UnitTypeRegistry.domainOf(unit)
-    val isReference = domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT
-    val isSonobuoy = domain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SONOBUOY
+    // R9：Domain 判定（参考点无航向航速；浮标显示深度）——G13 改为编辑期可改（联动编辑态）
+    val isReference = editDomain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.REFERENCE_POINT
+    val isSonobuoy = editDomain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SONOBUOY
+    // G13：Domain 联动显示区——飞机显示高度、潜艇/浮标显示深度（编辑期改 Domain 立即生效）
+    val showAltField = editDomain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR || unit.isAircraft()
+    val showDepthField = editDomain == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE || isSonobuoy || unit.isSubmarine()
     var showName by remember { mutableStateOf(unit.textTags.tagName) }
     var showCS by remember { mutableStateOf(unit.textTags.tagCourseSpeed) }
+    // G21：补全桌面 ContainerTextTags 9 项（模型 TextTags 字段已备，仅加 UI 开关；不改序列化键名）
+    var showTrackNum by remember { mutableStateOf(unit.textTags.tagTrackNum) }
+    var showUnitTypeTag by remember { mutableStateOf(unit.textTags.tagUnitType) }
+    var showClassTag by remember { mutableStateOf(unit.textTags.tagClass) }
+    var showAltTag by remember { mutableStateOf(unit.textTags.tagAltitude) }
+    var showDepthTag by remember { mutableStateOf(unit.textTags.tagDepth) }
+    var showCallsignTag by remember { mutableStateOf(unit.textTags.tagCallsign) }
+    var addText by remember { mutableStateOf(unit.textTags.additionalText) }
     var sunk by remember { mutableStateOf(unit.showSunk) }
+    // G20：主动传感器开关（桌面版 ContainerActiveSensors/ActiveRadar/ActiveSonar）
+    var activeRadar by remember { mutableStateOf(unit.isActiveRadar) }
+    var activeSonar by remember { mutableStateOf(unit.isActiveSonar) }
     var visibleBlue by remember { mutableStateOf(com.simplot.android.engine.FogOfWar.isVisibleTo(unit, "Blue")) }
     var visibleRed by remember { mutableStateOf(com.simplot.android.engine.FogOfWar.isVisibleTo(unit, "Red")) }
 
@@ -78,12 +111,17 @@ fun UnitEditSheet(
     var showClassBlue by remember { mutableStateOf(blueRec?.showClass ?: true) }
     var showTypeBlue by remember { mutableStateOf(blueRec?.showAsType ?: "") }
     var showSideBlue by remember { mutableStateOf(blueRec?.showAsSide ?: "") }
+    // G22：ShowAltitude/ShowDepth 受限项开关（桌面 ContainerPerception 变体；引擎 applyRestrictions 已支持）
+    var showAltBlue by remember { mutableStateOf(blueRec?.showAltitude ?: true) }
+    var showDepthBlue by remember { mutableStateOf(blueRec?.showDepth ?: true) }
     val redRec = unit.perceptionArray?.firstOrNull { it.seenBySide == "Red" }
     var showNameRed by remember { mutableStateOf(redRec?.showName ?: true) }
     var showCSRed by remember { mutableStateOf(redRec?.showCourseSpeed ?: true) }
     var showClassRed by remember { mutableStateOf(redRec?.showClass ?: true) }
     var showTypeRed by remember { mutableStateOf(redRec?.showAsType ?: "") }
     var showSideRed by remember { mutableStateOf(redRec?.showAsSide ?: "") }
+    var showAltRed by remember { mutableStateOf(redRec?.showAltitude ?: true) }
+    var showDepthRed by remember { mutableStateOf(redRec?.showDepth ?: true) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -94,6 +132,66 @@ fun UnitEditSheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.verticalScroll(rememberScrollState())
             ) {
+                // G13：身份区（桌面版 ContainerIdClass）——名称/类型大类/子类型/阵营/Class/Number/Range/呼叫号
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("名称") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                val domainOptions = com.simplot.android.domain.registry.UnitTypeRegistry.Domain.entries
+                    .filter { it != com.simplot.android.domain.registry.UnitTypeRegistry.Domain.UNKNOWN }
+                ShowAsDropdown(
+                    label = "类型大类",
+                    options = domainOptions.map { it.label to it.name },
+                    selected = editDomain.name,
+                    onSelect = { newDomainName ->
+                        com.simplot.android.domain.registry.UnitTypeRegistry.Domain.entries
+                            .firstOrNull { it.name == newDomainName }?.let { d ->
+                            editDomain = d
+                            type = registry.typesOf(d).firstOrNull() ?: ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                ShowAsDropdown(
+                    label = "子类型",
+                    options = registry.typesOf(editDomain).map { it to it },
+                    selected = type,
+                    onSelect = { type = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                ShowAsDropdown(
+                    label = "阵营",
+                    options = listOf("Blue", "Red", "Neutral", "Unknown").map { it to it },
+                    selected = side,
+                    onSelect = { side = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = unitClass, onValueChange = { unitClass = it },
+                        label = { Text("Class（类型简码）") },
+                        singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = numberText, onValueChange = { numberText = it },
+                        label = { Text("Number") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedTextField(
+                    value = rangeText, onValueChange = { rangeText = it },
+                    label = { Text("航程（海里，-100000=无限制）") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = callsign, onValueChange = { callsign = it },
+                    label = { Text("呼叫号（留空则显示名称）") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                HorizontalDivider()
                 if (!isReference) {
                     OutlinedTextField(
                         value = courseText,
@@ -117,7 +215,7 @@ fun UnitEditSheet(
                     )
                 }
 
-                if (unit.isAircraft()) {
+                if (showAltField) {
                     OutlinedTextField(
                         value = alt, onValueChange = { alt = it },
                         label = { Text("高度（米）") },
@@ -125,7 +223,7 @@ fun UnitEditSheet(
                         singleLine = true, modifier = Modifier.fillMaxWidth()
                     )
                 }
-                if (unit.isSubmarine() || isSonobuoy) {
+                if (showDepthField) {
                     OutlinedTextField(
                         value = depth, onValueChange = { depth = it },
                         label = { Text("深度（米）") },
@@ -150,14 +248,52 @@ fun UnitEditSheet(
                     )
                 }
 
+                // G19：被动方位编辑区（桌面版 PassiveBearings：增删/编辑 Type/BeamLength/BeamWidth/Bearing/Emitter/Label/ShowAsSide）
                 HorizontalDivider()
-                Text("标签显示", style = MaterialTheme.typography.labelMedium)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = showName, onCheckedChange = { showName = it })
-                    Text("显示名称")
-                    Checkbox(checked = showCS, onCheckedChange = { showCS = it })
-                    Text("显示航向航速")
+                Text("被动方位（声呐/ES）", style = MaterialTheme.typography.labelMedium)
+                bearings.forEachIndexed { idx, b ->
+                    key(idx) {
+                        PassiveBearingRow(
+                            bearing = b,
+                            onChange = { updated ->
+                                bearings = bearings.mapIndexed { i, old -> if (i == idx) updated else old }
+                                bearingsDirty = true
+                            },
+                            onDelete = {
+                                bearings = bearings.filterIndexed { i, _ -> i != idx }
+                                bearingsDirty = true
+                            }
+                        )
+                    }
                 }
+                TextButton(onClick = {
+                    bearings = bearings + com.simplot.android.data.model.PassiveBearing()
+                    bearingsDirty = true
+                }) { Text("+ 添加被动方位") }
+
+                HorizontalDivider()
+                Text("标签显示（桌面 9 项）", style = MaterialTheme.typography.labelMedium)
+                TagCheckboxRow(
+                    showName, { showName = it }, "名称",
+                    showTrackNum, { showTrackNum = it }, "航迹号"
+                )
+                TagCheckboxRow(
+                    showUnitTypeTag, { showUnitTypeTag = it }, "类型",
+                    showClassTag, { showClassTag = it }, "级别"
+                )
+                TagCheckboxRow(
+                    showCS, { showCS = it }, "航向航速",
+                    showCallsignTag, { showCallsignTag = it }, "呼叫号"
+                )
+                TagCheckboxRow(
+                    showAltTag, { showAltTag = it }, "高度",
+                    showDepthTag, { showDepthTag = it }, "深度"
+                )
+                OutlinedTextField(
+                    value = addText, onValueChange = { addText = it },
+                    label = { Text("附加文本") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
 
                 HorizontalDivider()
                 Text("可见性（需求二）", style = MaterialTheme.typography.labelMedium)
@@ -168,6 +304,17 @@ fun UnitEditSheet(
                     Text("对红方可见")
                 }
 
+                // G20：主动传感器开关（桌面版 ContainerActiveSensors/ActiveRadar/ActiveSonar；
+                // 渲染标记已在 UnitRenderer 绘制，此处在编辑期暴露开关）
+                HorizontalDivider()
+                Text("主动传感器（桌面 ContainerActiveSensors）", style = MaterialTheme.typography.labelMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = activeRadar, onCheckedChange = { activeRadar = it })
+                    Text("主动雷达")
+                    Checkbox(checked = activeSonar, onCheckedChange = { activeSonar = it })
+                    Text("主动声呐")
+                }
+
                 // 受限项（脱敏）：红蓝双方视角各自的显示限制
                 Text("受限项（蓝方视角）", style = MaterialTheme.typography.labelMedium)
                 RestrictedRow(
@@ -176,11 +323,15 @@ fun UnitEditSheet(
                     showClass = showClassBlue,
                     showType = showTypeBlue,
                     showSide = showSideBlue,
+                    showAltitude = showAltBlue,
+                    showDepth = showDepthBlue,
                     onName = { showNameBlue = it },
                     onCS = { showCSBlue = it },
                     onClass = { showClassBlue = it },
                     onType = { showTypeBlue = it },
-                    onSide = { showSideBlue = it }
+                    onSide = { showSideBlue = it },
+                    onAltitude = { showAltBlue = it },
+                    onDepth = { showDepthBlue = it }
                 )
                 HorizontalDivider()
                 Text("受限项（红方视角）", style = MaterialTheme.typography.labelMedium)
@@ -190,11 +341,15 @@ fun UnitEditSheet(
                     showClass = showClassRed,
                     showType = showTypeRed,
                     showSide = showSideRed,
+                    showAltitude = showAltRed,
+                    showDepth = showDepthRed,
                     onName = { showNameRed = it },
                     onCS = { showCSRed = it },
                     onClass = { showClassRed = it },
                     onType = { showTypeRed = it },
-                    onSide = { showSideRed = it }
+                    onSide = { showSideRed = it },
+                    onAltitude = { showAltRed = it },
+                    onDepth = { showDepthRed = it }
                 )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -205,16 +360,36 @@ fun UnitEditSheet(
         },
         confirmButton = {
             Button(onClick = {
+                // G13：身份/类型/阵营/Class/Number/Range/呼叫号应用（类型改 Domain 联动由模型 domainOf 重新判定）
+                unit.name = name
+                unit.unitClass = unitClass
+                unit.number = numberText.toIntOrNull() ?: unit.number
+                unit.unitType = type
+                unit.side = side
+                unit.range = rangeText.toIntOrNull() ?: unit.range
+                unit.textTags.callsign = callsign
+                // G19：被动方位写回（仅用户增删/编辑过才落盘，未动过的单位不新增键，保字节兼容）
+                if (bearingsDirty) unit.passiveBearingArray = bearings.toMutableList()
                 // 反馈⑨：航向 clamp 0-360；航速不限上限（仅保留下限 0，避免负航速）
                 unit.setCourse(course.toDouble().coerceIn(0.0, 360.0))
                 unit.setSpeed(speed.toDouble().coerceAtLeast(0.0))
                 xText.toLongOrNull()?.let { unit.x = it }    // R-P2：X/Y 应用
                 yText.toLongOrNull()?.let { unit.y = it }
-                if (unit.isAircraft() && alt.isNotBlank()) unit.setAltitude(alt.toInt())
-                if ((unit.isSubmarine() || isSonobuoy) && depth.isNotBlank()) unit.setDepth(depth.toInt())
+                if (showAltField && alt.isNotBlank()) unit.setAltitude(alt.toInt())
+                if (showDepthField && depth.isNotBlank()) unit.setDepth(depth.toInt())
                 unit.textTags.tagName = showName
                 unit.textTags.tagCourseSpeed = showCS
+                unit.textTags.tagTrackNum = showTrackNum
+                unit.textTags.tagUnitType = showUnitTypeTag
+                unit.textTags.tagClass = showClassTag
+                unit.textTags.tagAltitude = showAltTag
+                unit.textTags.tagDepth = showDepthTag
+                unit.textTags.tagCallsign = showCallsignTag
+                unit.textTags.additionalText = addText
                 unit.showSunk = sunk
+                // G20：主动传感器开关写回（桌面 ContainerActiveSensors）
+                unit.isActiveRadar = activeRadar
+                unit.isActiveSonar = activeSonar
                 com.simplot.android.engine.FogOfWar.setVisibility(
                     unit, "Blue", visibleBlue, unit.positionTimeCreated,
                     file = null
@@ -224,8 +399,8 @@ fun UnitEditSheet(
                     file = null
                 )
                 // 受限项写回 Blue/Red 感知记录（仅当该单位对该方可见且有记录时）
-                writePerception(unit, "Blue", visibleBlue, showNameBlue, showCSBlue, showClassBlue, showTypeBlue, showSideBlue)
-                writePerception(unit, "Red", visibleRed, showNameRed, showCSRed, showClassRed, showTypeRed, showSideRed)
+                writePerception(unit, "Blue", visibleBlue, showNameBlue, showCSBlue, showClassBlue, showTypeBlue, showSideBlue, showAltBlue, showDepthBlue)
+                writePerception(unit, "Red", visibleRed, showNameRed, showCSRed, showClassRed, showTypeRed, showSideRed, showAltRed, showDepthRed)
                 onApply(unit)
                 onDismiss()
             }) { Text("应用") }
@@ -236,9 +411,9 @@ fun UnitEditSheet(
                     // R-P2：删除先弹三选确认（桌面 DeleteUnit：Remove/Show as Sunk/Cancel）
                     showDeleteConfirm = true
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                // R6：复制入口（桌面版 Copy Unit）
+                // G29：复制入口（桌面版 Copy Unit → 剪贴板，不再立即生成副本；由 Paste 放置）
                 androidx.compose.material3.TextButton(onClick = {
-                    onDuplicate(unit); onDismiss()
+                    onCopy(unit); onDismiss()
                 }) { Text("复制") }
                 // 反馈⑨：编辑菜单加「取消」（不应用、不删除，仅关闭），顺序：删除、取消、应用
                 androidx.compose.material3.TextButton(onClick = { onDismiss() }) { Text("取消") }
@@ -294,7 +469,24 @@ private val SHOW_SIDE_OPTIONS: List<Pair<String, String>> = listOf(
 )
 
 /**
+ * 标签开关一行（G21：两个复选框一组，窄屏两列布局，桌面 ContainerTextTags 每项一个开关）。
+ */
+@Composable
+private fun TagCheckboxRow(
+    a: Boolean, onA: (Boolean) -> kotlin.Unit, aLabel: String,
+    b: Boolean, onB: (Boolean) -> kotlin.Unit, bLabel: String
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = a, onCheckedChange = onA)
+        Text("显示$aLabel")
+        Checkbox(checked = b, onCheckedChange = onB)
+        Text("显示$bLabel")
+    }
+}
+
+/**
  * 受限项一行：显示名称/航向航速/级别 三个复选框 + 显示为类型/阵营两个下拉。
+ * G22：补 ShowAltitude/ShowDepth 两个复选框（桌面 ContainerPerception 变体）。
  * 供蓝方/红方视角复用（契约8 红蓝双视角）。
  */
 @Composable
@@ -304,11 +496,15 @@ private fun RestrictedRow(
     showClass: Boolean,
     showType: String,
     showSide: String,
+    showAltitude: Boolean,
+    showDepth: Boolean,
     onName: (Boolean) -> kotlin.Unit,
     onCS: (Boolean) -> kotlin.Unit,
     onClass: (Boolean) -> kotlin.Unit,
     onType: (String) -> kotlin.Unit,
-    onSide: (String) -> kotlin.Unit
+    onSide: (String) -> kotlin.Unit,
+    onAltitude: (Boolean) -> kotlin.Unit,
+    onDepth: (Boolean) -> kotlin.Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = showName, onCheckedChange = onName)
@@ -317,6 +513,12 @@ private fun RestrictedRow(
         Text("显示航向航速")
         Checkbox(checked = showClass, onCheckedChange = onClass)
         Text("显示级别")
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = showAltitude, onCheckedChange = onAltitude)
+        Text("显示高度")
+        Checkbox(checked = showDepth, onCheckedChange = onDepth)
+        Text("显示深度")
     }
     ShowAsDropdown(
         label = "显示为类型",
@@ -334,7 +536,7 @@ private fun RestrictedRow(
     )
 }
 
-/** 写回感知记录（指定阵营）：记录存在且该方可见时更新受限项 */
+/** 写回感知记录（指定阵营）：记录存在且该方可见时更新受限项（G22：含 ShowAltitude/ShowDepth） */
 private fun writePerception(
     unit: Unit,
     side: String,
@@ -343,7 +545,9 @@ private fun writePerception(
     showCS: Boolean,
     showClass: Boolean,
     showType: String,
-    showSide: String
+    showSide: String,
+    showAltitude: Boolean,
+    showDepth: Boolean
 ) {
     val per = unit.perceptionArray?.firstOrNull { it.seenBySide == side }
     if (per != null && visible) {
@@ -352,6 +556,8 @@ private fun writePerception(
         per.showClass = showClass
         per.showAsType = showType
         per.showAsSide = showSide
+        per.showAltitude = showAltitude
+        per.showDepth = showDepth
     }
 }
 
@@ -393,5 +599,94 @@ private fun ShowAsDropdown(
                 )
             }
         }
+    }
+}
+
+/**
+ * G19：被动方位单条编辑行（桌面版 PassiveBearings.CBearing 面板）。
+ * 编辑 Type/BeamLength/BeamWidth/Bearing/Emitter/Label/ShowAsSide；
+ * 每次改动即时经 [onChange] 上抛（父层就地替换，删除经 [onDelete]）。
+ * 数值框非法输入保留上次有效值（与航向/航速同策略）。
+ */
+@Composable
+private fun PassiveBearingRow(
+    bearing: com.simplot.android.data.model.PassiveBearing,
+    onChange: (com.simplot.android.data.model.PassiveBearing) -> kotlin.Unit,
+    onDelete: () -> kotlin.Unit
+) {
+    var type by remember { mutableStateOf(bearing.type) }
+    var bearingText by remember { mutableStateOf(formatCourseSpeed(bearing.bearing)) }
+    var beamLenText by remember { mutableStateOf(formatCourseSpeed(bearing.beamLength)) }
+    var beamWidthText by remember { mutableStateOf(formatCourseSpeed(bearing.beamWidth)) }
+    var emitter by remember { mutableStateOf(bearing.emitter) }
+    var label by remember { mutableStateOf(bearing.label) }
+    var showAsSide by remember { mutableStateOf(bearing.showAsSide) }
+
+    fun emit() = onChange(
+        bearing.copy(
+            type = type,
+            bearing = bearingText.toDoubleOrNull() ?: bearing.bearing,
+            beamLength = beamLenText.toDoubleOrNull() ?: bearing.beamLength,
+            beamWidth = beamWidthText.toDoubleOrNull() ?: bearing.beamWidth,
+            emitter = emitter,
+            label = label,
+            showAsSide = showAsSide
+        )
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        HorizontalDivider()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = if (label.isNotBlank()) label else (if (emitter.isNotBlank()) "Emitter $emitter" else "方位 ${formatCourseSpeed(bearing.bearing)}°"),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = type, onValueChange = { type = it; emit() },
+                label = { Text("Type") },
+                singleLine = true, modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = bearingText, onValueChange = { bearingText = it; emit() },
+                label = { Text("Bearing（度）") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true, modifier = Modifier.weight(1f)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = beamLenText, onValueChange = { beamLenText = it; emit() },
+                label = { Text("BeamLength") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true, modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = beamWidthText, onValueChange = { beamWidthText = it; emit() },
+                label = { Text("BeamWidth") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true, modifier = Modifier.weight(1f)
+            )
+        }
+        OutlinedTextField(
+            value = emitter, onValueChange = { emitter = it; emit() },
+            label = { Text("Emitter（目标 IdNum）") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = label, onValueChange = { label = it; emit() },
+            label = { Text("Label") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+        ShowAsDropdown(
+            label = "ShowAsSide",
+            options = listOf("Blue", "Red", "Neutral", "Unknown").map { it to it },
+            selected = showAsSide,
+            onSelect = { showAsSide = it; emit() },
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
