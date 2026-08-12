@@ -1,6 +1,7 @@
 package com.simplot.android
 
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
@@ -61,6 +62,7 @@ import com.simplot.android.ui.components.NewUnitDialog
 import com.simplot.android.ui.components.NewScenarioDialog
 import com.simplot.android.ui.components.ReplayBar
 import com.simplot.android.ui.components.SceneCanvas
+import com.simplot.android.ui.components.SceneLibraryDialog
 import com.simplot.android.ui.components.SettingsDialog
 import com.simplot.android.ui.components.TurnControlBar
 import com.simplot.android.ui.components.UnitEditSheet
@@ -127,18 +129,49 @@ class MainActivity : ComponentActivity() {
             vm?.rememberNewScenarioMapName(it)
         }
     }
+    // P3 场景库：选择场景目录（SAF tree）→ 持久化授权 + SharedPreferences 记忆 + 刷新场景库列表
+    private val sceneLibraryDirPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    it,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (e: SecurityException) {
+                // 个别 Provider 不支持持久授权：忽略，本次会话内仍可用
+            }
+            getSharedPreferences(PREFS_SCENE_LIBRARY, MODE_PRIVATE)
+                .edit().putString(PREF_SCENE_LIBRARY_DIR, it.toString()).apply()
+            sceneLibraryDir = it
+            vm?.toast("场景库目录已设置")
+        }
+    }
 
     // 供回调使用的 ViewModel 引用（onCreate 中赋值）
     private var vm: GameViewModel? = null
+
+    // P3 场景库：记住的目录（SharedPreferences 持久化，onCreate 恢复）+ 对话框开关
+    // 用 activity 级 mutableStateOf：回调（SAF 选择器返回）可直接更新，Compose 侧自动重组
+    private var sceneLibraryDir by mutableStateOf<Uri?>(null)
+    private var showSceneLibrary by mutableStateOf(false)
 
     // G06：导出运动命令的单位子集 + 玩家名暂存（导出对话框确认 → SAF 目录选择回调之间）
     private var pendingExportUnits: List<SimUnit>? = null
     private var pendingExportPlayerName: String = ""
 
+    companion object {
+        // P3 场景库：SharedPreferences 文件与键（目录 uri 持久化，跨启动记忆）
+        private const val PREFS_SCENE_LIBRARY = "simplot_scene_library"
+        private const val PREF_SCENE_LIBRARY_DIR = "scene_library_dir"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 契约7：注入应用级 Context 供 UnitRenderer 懒加载 CWS 精灵图（assets/symbols/）
         com.simplot.android.render.UnitRenderer.init(applicationContext)
+        // P3 场景库：恢复上次记住的目录（takePersistableUriPermission 在授权时已完成，无需再校验）
+        sceneLibraryDir = getSharedPreferences(PREFS_SCENE_LIBRARY, MODE_PRIVATE)
+            .getString(PREF_SCENE_LIBRARY_DIR, null)?.let { Uri.parse(it) }
         setContent {
             SimPlotTheme {
                 val viewModel: GameViewModel = viewModel()
@@ -378,6 +411,20 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // P3 场景库（应用内场景列表/管理：记住目录 + 列表打开 + 删除）
+        if (showSceneLibrary) {
+            SceneLibraryDialog(
+                dirUri = sceneLibraryDir,
+                onChangeDir = { sceneLibraryDirPicker.launch(null) },
+                onOpen = { uri ->
+                    showSceneLibrary = false
+                    vm.loadScenario(uri)
+                },
+                onToast = { vm.toast(it) },
+                onDismiss = { showSceneLibrary = false }
+            )
+        }
+
         // G01：新场景创建（桌面版 WindowNewScenario：场景名 + 起始日期时间 + 地图选择）
         if (vm.showNewScenario) {
             NewScenarioDialog(
@@ -441,6 +488,8 @@ class MainActivity : ComponentActivity() {
         Button(onClick = { openFile.launch(arrayOf("application/json", "application/octet-stream", "*/*")) }) {
             Text("打开")
         }
+        // P3 场景库：应用内场景列表（记住目录，点选即开，可删除）
+        Button(onClick = { showSceneLibrary = true }) { Text("场景库") }
         Button(onClick = {
             // 反馈⑱：每次保存都弹系统「保存为」对话框（选路径+文件名）
             if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
@@ -570,6 +619,8 @@ class MainActivity : ComponentActivity() {
                 }
             } else {
                 // API 26-28：旧接口写入相册（部分设备需存储权限，失败走提示）
+                // 注：insertImage 自 API 29 起弃用，此分支为低版本兼容路径，有意保留，仅压制告警
+                @Suppress("DEPRECATION")
                 val inserted = MediaStore.Images.Media.insertImage(contentResolver, bmp, name, "SimPlot 地图截图")
                 if (inserted != null) {
                     vm?.toast("截图已保存：$name")
