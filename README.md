@@ -2,7 +2,7 @@
 
 将桌面尺规海战兵棋绘图工具 **SimPlot2**（Harpoon/鱼叉）移植到 Android，完全适配触摸屏与手机 UI。
 
-> 当前版本：**0.1.0**（开发版） · 变更记录见 [CHANGELOG.md](CHANGELOG.md) · 版本号在 `app/build.gradle.kts`，**每次发布必须递增并同步更新 CHANGELOG**
+> 当前版本：**0.7.0**（2026-08-13） · 变更记录见 [CHANGELOG.md](CHANGELOG.md) · 版本号在 `app/build.gradle.kts`，**每次发布必须递增并同步更新 CHANGELOG**
 
 > 本仓库为 **Kotlin + Jetpack Compose** 原生安卓实现。数据层与规则引擎由已验证的 Python 脚本（`scn_tool.py` / `simplot_cmd.py`）逐行转译，存档与桌面版**字节级兼容**。
 
@@ -16,6 +16,7 @@
 | 👆 触摸交互 | 双指捏合缩放 / 单指拖拽平移 / 轻点选择 / 长按编辑（底部弹层） |
 | ⚓ 规则引擎 | 鱼叉同步回合移动：转向前冲/分段/渐进式、加速两档（含 75% 加速档）、每 45° 转向损失、急舵、潜艇静航、Range 耗尽停船、完整 undo、回合回放 |
 | 🗺 地图 | 无图网格 / 位图地图（PNG + txt 比例尺）/ **官方 MapMaker JSON 配置**（BoundaryRect、陆地多边形、标注、背景图自动加载） |
+| 🗂 场景库 | 记忆场景目录（SAF 持久授权）+ 应用内场景列表（`.json`/`.SpScn` 按名排序）+ 轻点打开 + 删除（二次确认） |
 
 ## 技术架构
 
@@ -54,17 +55,35 @@ echo "sdk.dir=/opt/android-sdk" > local.properties   # 替换为实际 SDK 路�
 
 # 3. 构建 debug APK
 ./gradlew assembleDebug
+
+# 4. 构建 release APK（可选签名；未配置时产出未签名 APK）
+#    首次发布签名：生成 keystore 并写 keystore.properties（两者均被 .gitignore 忽略）：
+#      keytool -genkeypair -v -keystore simplot-release.keystore -alias simplot \
+#        -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=SimPlot Android"
+#      cat > keystore.properties <<'EOF'
+#      storeFile=simplot-release.keystore
+#      storePassword=你的密码
+#      keyAlias=simplot
+#      keyPassword=你的密码
+#      EOF
+./gradlew assembleRelease
 ```
 
-产出：`app/build/outputs/apk/debug/app-debug.apk`（v0.6.0 实测约 10.4 MB）。
+产出：`app/build/outputs/apk/debug/app-debug.apk`（v0.7.0 实测约 10.4 MB）与
+`app/build/outputs/apk/release/app-release.apk`（v0.7.0 实测约 7.2 MB，已签名；未配置签名时为 `app-release-unsigned.apk`，不可安装）。
 
 ### 运行单元测试
 
 ```bash
-./gradlew test
+./gradlew test          # 全部变体（debug + release）的 JVM 单测 + Robolectric UI 测试
 ```
 
-基线：**50 测试类 / 311 用例全绿**（0 failure / 0 error / 0 skip），与 CHANGELOG 声明一致。
+基线：**53 测试类 / 330 用例全绿**（0 failure / 0 error / 0 skip），与 CHANGELOG 声明一致。
+其中 v0.7.0 新增 15 个场景库用例基于 **Robolectric 4.14 + Compose ui-test-junit4**，无需模拟器即可在
+JVM 上运行真实 Compose UI 语义树测试；测试宿主 `ComponentActivity` 声明在
+`app/src/main/AndroidManifest.xml`（非 exported，不影响真实应用）。
+
+> 注意：Robolectric 首次运行会下载 `android-all` 运行环境 jar（约 100MB，从 Maven Central 拉取）。
 
 ### 常见问题
 
@@ -74,6 +93,12 @@ echo "sdk.dir=/opt/android-sdk" > local.properties   # 替换为实际 SDK 路�
 - **OOM / 构建被杀**：`gradle.properties` 已按 3.4GB 沙箱调优，若内存更紧张可将 `org.gradle.jvmargs` 中的 `-Xmx1024m` 调低；不要同时开多个 Gradle 进程。
 
 或用 Android Studio 打开本目录直接运行（会自动读取 `local.properties`）。
+
+## 使用说明
+
+- **打开场景**：主界面「打开」经 SAF 选择 `.json`（明文）或 `.SpScn`（混淆）文件。
+- **场景库**：顶部工具栏「场景库」选择并记忆常用场景目录（SAF 持久授权，跨启动恢复）；应用内列表展示目录下所有 `.json` / `.SpScn`（按名排序），轻点行打开，行内「删除」需二次确认。
+- **保存**：选择场景目录，自动生成四文件存档（Referee/Blue/Red + player_settings），与桌面版 `Scenarios/` 目录互通。
 
 ## 与桌面版互通
 
@@ -92,7 +117,8 @@ echo "sdk.dir=/opt/android-sdk" > local.properties   # 替换为实际 SDK 路�
 - [x] P0 数据地基：模型 / 编解码 / 四文件读写 / 回合时长分秒
 - [x] P1 渲染浏览：手势画布 / 网格 / 军标 / 轨迹 / 射程弧 / 官方地图
 - [x] P2 功能复刻：单位编辑 / 回合机制 / 感知迷雾 / 回合时间 / undo / 回放
-- [ ] P3 打磨发布：横竖屏适配 / 场景库管理 / 真机构建验证
+- [x] P3 打磨发布：场景库管理（v0.7.0）；横竖屏适配经排查确认布局自适应、无需改动
+- [ ] P3 剩余：真机构建与安装验证（需真机/模拟器环境）
 
 ## 许可
 

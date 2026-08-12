@@ -8,6 +8,14 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SimPlot">
+        <!-- 供 Robolectric + Compose ui-test-junit4 在 JVM 上启动测试宿主。
+             AGP 不消费 src/test/AndroidManifest.xml（无 unit-test manifest 合并任务），
+             只能声明在主 manifest：debug/release 两变体的合并 manifest 才能解析到该 Activity。
+             非 exported、非 launchable，对真实应用无影响。 -->
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SimPlot" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

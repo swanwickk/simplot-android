@@ -13,3 +13,7 @@
 
 # Kotlin compiler internal logs
 .kotlin/
+
+# 发布签名（本地生成，不入库）
+/keystore.properties
+/simplot-release.keystore

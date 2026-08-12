@@ -5,6 +5,31 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.7.0] - 2026-08-13
+
+### P3 场景库管理 + 测试与交付完备化
+
+**新增：场景库管理（桌面版 WindowLoadScenarios 的安卓对应物）**
+- 顶部工具栏「场景库」入口：SAF 目录选择（`OpenDocumentTree` + `takePersistableUriPermission`），目录记忆持久化到 SharedPreferences，跨启动恢复
+- 应用内场景列表：遍历目录内 `.json` / `.SpScn` 文件（过滤目录与其他文件、大小写不敏感排序），轻点行打开场景（`buildDocumentUriUsingTree`）
+- 行内「删除」→ 二次确认 AlertDialog → `DocumentsContract.deleteDocument`；失败/成功均有 Toast 反馈
+- 列表高度随屏幕高度自适应（横竖屏不溢出）
+
+**测试基础设施（无模拟器环境可在 JVM 运行 UI 测试）**
+- 引入 Robolectric 4.14 + Compose ui-test-junit4：新增 `SceneLibraryDialogUiTest`（6 个 Compose UI 用例：空态×2/列表排序/点击打开/删除取消/删除失败）+ `SceneLibraryDataTest`（9 个 SAF 交互函数用例：querySceneFiles 过滤排序/空表/缺列名容错/异常上抛/queryTreeDisplayName×3/deleteSceneDocument 成败路径）
+- 测试宿主 `ComponentActivity` 声明在 `app/src/main/AndroidManifest.xml`（非 exported）；`testOptions.unitTests.isIncludeAndroidResources = true`。说明：AGP 不消费 `src/test/AndroidManifest.xml`（无 unit-test manifest 合并任务），且 `ui-test-manifest` 是 debugImplementation AAR 会让 release 变体缺声明，故声明在主 manifest，两变体通用
+
+**构建与发布**
+- `app/build.gradle.kts`：新增可选 release 签名（读 `keystore.properties`，缺失时退化为未签名 release APK）
+- GitHub Actions CI 增加 `assembleRelease`（unsigned）产物上传
+- 全量单测基线：**53 类 / 330 用例全绿**（0 failure / 0 error / 0 skip；debug + release 两变体均跑）
+- 交付：debug + release APK、本仓库可一键 `./gradlew test` / `assembleDebug` / `assembleRelease`
+
+### 验证
+- `./gradlew test` → BUILD SUCCESSFUL（含新增 Robolectric UI 测试）
+- `./gradlew assembleDebug` / `assembleRelease` → 产物正常（release 已用本地 keystore 签名，apksigner 校验通过）
+- 未变：存档字节级互通、引擎逻辑（0.6.0 基线 311 用例全量回归通过）
+
 ## [0.6.0] - 2026-08-12
 
 ### 大修：桌面版功能复刻 + 存档互通（对照反编译资料 4 批次）

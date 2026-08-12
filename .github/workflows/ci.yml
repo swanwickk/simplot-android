@@ -30,11 +30,14 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Unit tests (50 classes / 311 cases baseline)
+      - name: Unit tests (含 Robolectric Compose UI 测试)
         run: gradle test
 
       - name: Assemble debug APK
         run: gradle assembleDebug
+
+      - name: Assemble release APK (unsigned, 无仓库内签名)
+        run: gradle assembleRelease
 
       - name: Lint
         run: gradle lintDebug
@@ -45,3 +48,10 @@ jobs:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Upload release APK (unsigned)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: warn
