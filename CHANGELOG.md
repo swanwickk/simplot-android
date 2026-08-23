@@ -1,5 +1,35 @@
 # 更新日志 (Changelog)
 
+
+## [v0.7.4] - 2026-08-22
+
+### 回合控制（对齐 PC 版 Do/Undo/Next）
+- **Do/Undo/Next 亮灭彻底修复**：ViewModel 新增显式可观察 `turnState`，三处按钮（竖屏底栏 / 横屏右侧竖条 / 回合控制卡）全部直接绑定；Do 后 Undo+Next 立即点亮、Do 灰；Next/Undo 后恢复。
+- **状态机主判据改为桌面权威 Phase 字段**（advanceTime→2，confirmNext/undo→0），轨迹推断降为旧存档兜底。
+- **R3**：`lastTurnInterval` 快照——Next 写入 Turns 复用 Do 时时长；Undo 跨重启回退优先 Turns 历史 interval。
+- **T1**：脏时间不再跳变 now()，回原值 + 错误日志。
+
+### 单位符号（核对桌面素材后重做）
+- **NTDS 与 CWS 分离**：NTDS 是独立矢量符号系统（水面=圆点+航向线、潜艇=十字、飞机=三角翼），不再误用 CWS 的 PNG 精灵图（此前两套一模一样的根因）；精灵图仅服务 CWS 三变体。
+
+### 数据与持久化
+- **R4 RangeMm 全链路**：毫米海里余额跨存盘（0.4/0.6 海里不再取整漂移）；编辑面板支持一位小数输入、显示真实余额（修复"剩0.6显示为0"的假耗尽）。
+- **W1/W2**：`UnitAdapter` — I/R 不可移动单位剔除 Speed/Course/Range/RangeMm/WpDistance；空串 Formation 归一 null。
+- **W3**：侧文件 Blue/Red.SpScn 保留触发可见的 Perception 记录（Mediterranean 实测对齐）。
+- **J1**：lenient 空 {} 返回可变集合（根治 "Operation is not supported for read-only collection" → Do 失败）。
+
+### 引擎修正
+- **R2**：归档阈值改用本回合实走距离（去 1nm 下限），顺序 move→archive→altitude 对齐桌面 CustomTimer。
+- 编队移动同步成员航向/航速（E1）等历史项保持。
+
+### UI
+- 标签背景改 33% 半透明，不再遮挡单位；可在设置关闭标签背景。
+- hitTest 命中半径乘尺寸档；对话框 imePadding 避键盘；横屏竖条 navigationBarsPadding。
+- Neutral 白色单位描边全链路补强。
+
+### 测试
+- **374 tests / 62 suites 全绿**（含远端 v0.7.0 场景库测试回归 + 本轮新增 R2/R3/R4/T1/SpScn 往返回归）。
+
 版本号规则：开发版从 **0.1** 开始，每次发布递增（`MAJOR.MINOR.PATCH`，开发期 MAJOR=0）。
 **每次 push 到 GitHub 前必须更新本文件 + `app/build.gradle.kts` 的 versionName/versionCode。**
 

@@ -19,6 +19,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Robolectric UI 测试宿主（v0.7.0 场景库等测试依赖；不导出） -->
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SimPlot" />
     </application>
 
 </manifest>
