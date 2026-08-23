@@ -19,6 +19,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
 import com.simplot.android.data.util.CoordUtil
@@ -47,7 +48,7 @@ fun SceneCanvas(
     mapRenderer: MapRenderer,
     selectedUnitId: String?,
     onSelect: (String?) -> kotlin.Unit,
-    onLongPress: (Unit) -> kotlin.Unit = {},
+    // #11 修复：删除无调用方的 onLongPress 参数（G32 已改为长按拖拽 Relocate）
     onRelocate: (unitId: String, x: Long, y: Long) -> kotlin.Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
     replayFrame: ReplayEngine.Frame? = null,
@@ -59,7 +60,8 @@ fun SceneCanvas(
     symbolStyle: com.simplot.android.render.UnitRenderer.SymbolStyle = com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS,
     settings: com.simplot.android.domain.model.PlayerSettings = com.simplot.android.domain.model.PlayerSettings.DEFAULT,
     miscAnnotations: List<com.simplot.android.domain.model.MiscAnnotation> = emptyList(),
-    showSide: com.simplot.android.ui.ShowSide = com.simplot.android.ui.ShowSide.ALL
+    showSide: com.simplot.android.ui.ShowSide = com.simplot.android.ui.ShowSide.ALL,
+    distanceUnit: com.simplot.android.data.util.CoordUtil.DistanceUnit = com.simplot.android.data.util.CoordUtil.DistanceUnit.NM
 ) {
     val replaying = replayFrame != null
     // G30：Show Side 视图过滤（All/Blue/Red）——仅影响绘制与命中检测，不落盘、不改引擎状态
@@ -72,23 +74,43 @@ fun SceneCanvas(
     // 通过 draw 内显式快照读保证 epoch 变化即重绘（Do/编辑/复制/护航队/Undo 均覆盖）。
     var drawEpoch by remember { mutableIntStateOf(0) }
     LaunchedEffect(tick) { drawEpoch = tick }
-    // 仅在新场景首次布局时自适应视野；用户手动平移/缩放后不再重置
-    var fittedFile by remember(file) { mutableStateOf<ScenarioFile?>(null) }
+    // 记录画布像素尺寸；新场景载入时自适应视野（单位坐标或地图边界）
+    // 修复：选中单位导致 file.units.size/key 稳定但 canvasSize 因底部栏显隐变化时不应重做 fitBounds 缩到最小
+    // 用 file 顶层 key（场景名 + 单位数 + 地图名）作为稳定 key，且仅在 fileKey 变化时拟合，其余仅响应尺寸变化做居中保持
+    var lastFileKey by remember { mutableStateOf<String?>(null) }
+    val fileKey = file.scenario.scenarioName + "|" + file.units.size + "|" + (file.scenario.mapFileName ?: "")
+    var canvasSize by remember { mutableStateOf<IntSize?>(null) }
+    LaunchedEffect(fileKey, canvasSize) {
+        if (lastFileKey == fileKey) return@LaunchedEffect
+        lastFileKey = fileKey
+        val size = canvasSize ?: return@LaunchedEffect
+        if (size.width > 0 && size.height > 0) {
+            val xs = file.units.map { it.x }
+            val ys = file.units.map { it.y }
+            if (xs.isNotEmpty()) {
+                camera.fitBounds(xs.min(), xs.max(), ys.min(), ys.max(), size.width, size.height)
+            } else if (mapRenderer.hasBoundary) {
+                camera.fitBounds(
+                    mapRenderer.boundaryLeft,
+                    mapRenderer.boundaryLeft + mapRenderer.boundaryWidth,
+                    mapRenderer.boundaryTop,
+                    mapRenderer.boundaryTop + mapRenderer.boundaryHeight,
+                    size.width,
+                    size.height
+                )
+            } else {
+                camera.centerOn(0L, 0L)
+                camera.zoom = 0.0015f
+            }
+        }
+    }
     // 测量状态（桌面版 Measurement.AddNewMeasure/ExtendMeasure）
     var measureStart by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var measureEnd by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     Canvas(
         modifier = modifier
             .onSizeChanged { size ->
-                // 仅新场景首次布局时自适应视野（场景单位范围），避免覆盖用户手势
-                if (size.width > 0 && size.height > 0 && fittedFile !== file) {
-                    fittedFile = file
-                    val xs = file.units.map { it.x }
-                    val ys = file.units.map { it.y }
-                    if (xs.isNotEmpty()) {
-                        camera.fitBounds(xs.min(), xs.max(), ys.min(), ys.max(), size.width, size.height)
-                    }
-                }
+                canvasSize = size
             }
             .pointerInput(measureMode, showSide) {
                 // Bug 3 修复：测量模式下完全不注册 transform 手势（单指=画线、无地图拖动/缩放）。
@@ -141,8 +163,8 @@ fun SceneCanvas(
                             }
                         }
                         if (!isDrag) {
-                            // 轻点：选中单位（不 consume；空白则 hit=null → onSelect(null) 取消选中）
-                            val hit = hitTest(viewUnits, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom)
+                            // 轻点：选中单位（不 consume；空白则 hit=null → onSelect(null) 取消选中）；H1：命中半径需×SymbolSize.scale
+                            val hit = hitTest(viewUnits, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom, settings.symbolSize.scale)
                             onSelect(hit?.idNum)
                         } else if (completed && start != null && last != null) {
                             // 仅在手势正常完成（非取消）时记录测量线，避免半条线（N1）
@@ -156,7 +178,7 @@ fun SceneCanvas(
                     // 轻点 → 选中；长按空白无动作；拖动期间 draggingUnitId 非空 → transform 禁用地图平移。
                     awaitEachGesture {
                         val down = awaitFirstDown()
-                        val hit = hitTest(viewUnits, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom)
+                        val hit = hitTest(viewUnits, camera, down.position, size.width.toInt(), size.height.toInt(), camera.zoom, settings.symbolSize.scale)
                         if (hit != null) {
                             // 按下即选中（拖拽中的单位即当前选中，桌面 MouseDrag 语义）
                             onSelect(hit.idNum)
@@ -202,6 +224,9 @@ fun SceneCanvas(
         // draw 阶段快照读：epoch 变化 → Canvas 失效重绘（④ 修复核心）
         @Suppress("UNUSED_VARIABLE") val epoch = drawEpoch
 
+        // #9 修复：调色板每帧只算一次（此前每单位每帧 paletteOf(settings) 造成大量小对象分配）
+        val palette = UnitRenderer.paletteOf(settings)
+
         // 背景（R7：颜色可配置，桌面版 Colors.BackgroundColor）
         drawRect(androidx.compose.ui.graphics.Color(settings.backgroundColor))
 
@@ -224,9 +249,8 @@ fun SceneCanvas(
 
         // 轨迹（R4：ShowWaypoints 关时不画轨迹线）
         if (settings.showWaypoints) {
-            val trackPalette = UnitRenderer.paletteOf(settings)
             for (u in viewUnits) {
-                TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, palette = trackPalette)
+                TrackRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, palette = palette)
             }
         }
 
@@ -244,7 +268,7 @@ fun SceneCanvas(
 
         // 编队连线（桌面版 ShowFormations）：同编队成员与中心连线（细灰线）
         if (settings.showFormations) {
-            drawFormationLines(drawContext.canvas.nativeCanvas, viewUnits, camera, w, h)
+            drawFormationLines(drawContext.canvas.nativeCanvas, viewUnits, camera, w, h, palette)
         }
 
         // Misc 标注（R7：桌面版 MiscBox/Oval/Line/Polygon/Label，Overlay 层）
@@ -261,19 +285,22 @@ fun SceneCanvas(
                 val pos = posById[u.idNum] ?: continue
                 val (sx, sy) = camera.worldToScreen(pos.x, pos.y, w, h)
                 if (sx in -60f..w + 60f && sy in -60f..h + 60f) {
+                    // #25 说明：u.copy 仅为回放帧位置渲染（UnitRenderer.draw 按 u.x/y 取位），
+                    // Unit.copy 为浅拷贝（航路点等引用共享），分配开销可接受，保留。
                     val frameUnit = u.copy(x = pos.x, y = pos.y)
                     UnitRenderer.draw(drawContext.canvas.nativeCanvas, frameUnit, sx, sy,
                         sizePx = UnitRenderer.iconSizePx(camera.zoom) * settings.symbolSize.scale,
                         symbolStyle = symbolStyle, symbolSet = settings.symbolSet,
                         ww2Mode = settings.ww2Symbols, sizeLevel = settings.symbolSize,
                         showSpeedLeader = settings.showSpeedLeaders,
-                        palette = UnitRenderer.paletteOf(settings),
-                        friendlySymbols = settings.showFriendlySymbols)
+                        palette = palette,
+                        friendlySymbols = settings.showFriendlySymbols,
+                        showSideName = showSide.sideName)
                     if (settings.showLabels) {
-                        drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom,
+                        drawUnitLabel(drawContext.canvas.nativeCanvas, frameUnit, sx, sy, camera.zoom, showSideName = showSide.sideName,
                             useLabelBackground = settings.useLabelBackground,
                             backgroundColor = settings.backgroundColor,
-                            palette = UnitRenderer.paletteOf(settings))
+                            palette = palette)
                     }
                 }
             }
@@ -287,13 +314,14 @@ fun SceneCanvas(
                         symbolSet = settings.symbolSet, ww2Mode = settings.ww2Symbols,
                         sizeLevel = settings.symbolSize,
                         showSpeedLeader = settings.showSpeedLeaders,
-                        palette = UnitRenderer.paletteOf(settings),
-                        friendlySymbols = settings.showFriendlySymbols)
+                        palette = palette,
+                        friendlySymbols = settings.showFriendlySymbols,
+                        showSideName = showSide.sideName)
                     if (settings.showLabels) {
-                        drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom,
+                        drawUnitLabel(drawContext.canvas.nativeCanvas, u, sx, sy, camera.zoom, showSideName = showSide.sideName,
                             useLabelBackground = settings.useLabelBackground,
                             backgroundColor = settings.backgroundColor,
-                            palette = UnitRenderer.paletteOf(settings))
+                            palette = palette)
                     }
                 }
             }
@@ -305,7 +333,7 @@ fun SceneCanvas(
         // 修复 B：仅测量模式内绘制留存线；退出测量模式即清除（MainActivity 调 clearMeasures + 此条件双保险）
         if (measureMode) {
             for (m in savedMeasures) {
-                drawMeasureLine(nc, camera, w, h, m.first, m.second, saved = true)
+                drawMeasureLine(nc, camera, w, h, m.first, m.second, saved = true, distanceUnit = distanceUnit)
             }
         }
         // ② 点选单位到其它单位的距离/方位辅助线（灰线 + 中点标签）
@@ -317,29 +345,18 @@ fun SceneCanvas(
                 for (d in ud) {
                     val target = file.units.firstOrNull { it.idNum == d.idNum } ?: continue
                     val (tx, ty) = camera.worldToScreen(target.x, target.y, w, h)
-                    val linePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.argb(160, 90, 90, 90)
-                        strokeWidth = 1.5f
-                        style = android.graphics.Paint.Style.STROKE
-                    }
+                    val linePaint = ScenePaintPool.distLine
                     nc.drawLine(selX, selY, tx, ty, linePaint)
                     val midX = (selX + tx) / 2f
                     val midY = (selY + ty) / 2f - 6f
-                    val lines = listOf(d.name, String.format("%.1f nmi %.0f°", d.distNm, d.bearingDeg))
+                    // #15：显式 Locale.US，支持距离单位切换
+                    val distStr = com.simplot.android.data.util.CoordUtil.formatDistance(d.distNm, distanceUnit)
+                    val lines = listOf(d.name, String.format(java.util.Locale.US, "%s %.0f°", distStr, d.bearingDeg))
                     // 契约6：辅助线标签与单位名称统一走 labelTextSize（随 zoom 缩放），行高随字号
                     val labelSize = UnitRenderer.labelTextSize(camera.zoom)
-                    val outlinePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.BLACK
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 4f
-                        textSize = labelSize
-                        textAlign = android.graphics.Paint.Align.CENTER
-                    }
-                    val fillPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.WHITE
-                        textSize = labelSize
-                        textAlign = android.graphics.Paint.Align.CENTER
-                    }
+                    // #9：复用池画笔（描边/填充两遍，CENTER 对齐在池内初始化）
+                    val outlinePaint = ScenePaintPool.distLabelOutline.apply { textSize = labelSize }
+                    val fillPaint = ScenePaintPool.distLabelFill.apply { textSize = labelSize }
                     val lineHeight = labelSize * 1.2f
                     var textY = midY - (lines.size - 1) * lineHeight / 2f + 5f
                     for (line in lines) {
@@ -354,7 +371,7 @@ fun SceneCanvas(
         val ms = measureStart
         val me = measureEnd
         if (ms != null && me != null) {
-            drawMeasureLine(nc, camera, w, h, ms, me, saved = false)
+            drawMeasureLine(nc, camera, w, h, ms, me, saved = false, distanceUnit = distanceUnit)
         }
 
         // 坐标比例尺条（右下角；R4：ShowScaleBar 开关；G17：数值随 zoom 动态计算）
@@ -372,36 +389,32 @@ private fun drawMeasureLine(
     h: Int,
     start: Pair<Long, Long>,
     end: Pair<Long, Long>,
-    saved: Boolean
+    saved: Boolean,
+    distanceUnit: com.simplot.android.data.util.CoordUtil.DistanceUnit = com.simplot.android.data.util.CoordUtil.DistanceUnit.NM
 ) {
     val (sx0, sy0) = camera.worldToScreen(start.first, start.second, w, h)
     val (sx1, sy1) = camera.worldToScreen(end.first, end.second, w, h)
-    val mPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    // #9：复用池画笔（保留/临时线色与线宽按需覆盖）
+    val mPaint = ScenePaintPool.measureLine.apply {
         color = if (saved) android.graphics.Color.argb(150, 220, 60, 40)
         else android.graphics.Color.argb(230, 220, 60, 40)
         strokeWidth = if (saved) 2f else 3f
-        style = android.graphics.Paint.Style.STROKE
     }
     canvas.drawLine(sx0, sy0, sx1, sy1, mPaint)
     canvas.drawCircle(sx0, sy0, if (saved) 4f else 8f, mPaint)
     val distNm = CoordUtil.distanceNm(start.first, start.second, end.first, end.second)
     val bearing = CoordUtil.bearingDeg(start.first, start.second, end.first, end.second)
-    val label = String.format("%.1f nmi  方位 %.0f°", distNm, bearing)
+    // #15：显式 Locale.US，支持距离单位切换
+    val distStr = CoordUtil.formatDistance(distNm, distanceUnit)
+    val label = String.format(java.util.Locale.US, "%s  方位 %.0f°", distStr, bearing)
     val midX = (sx0 + sx1) / 2f
     val midY = (sy0 + sy1) / 2f - 14f
     // 两遍画法：先黑描边再白填充（同坐标，无偏移阴影），任何底色可读
     // 契约6：测量标签与单位名称统一走 labelTextSize（随 zoom 缩放）
     val labelSize = UnitRenderer.labelTextSize(camera.zoom)
-    val strokePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.BLACK
-        style = android.graphics.Paint.Style.STROKE
-        strokeWidth = 4f
-        textSize = labelSize
-    }
-    val fillPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
-        textSize = labelSize
-    }
+    // #9：复用池画笔（描边/填充两遍）
+    val strokePaint = ScenePaintPool.measureLabelOutline.apply { textSize = labelSize }
+    val fillPaint = ScenePaintPool.measureLabelFill.apply { textSize = labelSize }
     canvas.drawText(label, midX, midY, strokePaint)
     canvas.drawText(label, midX, midY, fillPaint)
 }
@@ -413,31 +426,44 @@ private fun drawMeasureLine(
  */
 private fun drawUnitLabel(
     canvas: android.graphics.Canvas, u: Unit, sx: Float, sy: Float, zoom: Float,
+    showSideName: String? = null,
     useLabelBackground: Boolean = true,
     backgroundColor: Long = 0xFFF0F2F5,
     palette: UnitRenderer.Palette = UnitRenderer.Palette()
 ) {
     val tag = u.textTags
+    val per = if (showSideName != null) u.perceptionArray?.firstOrNull { it.seenBySide.equals(showSideName, true) } else null
+    val effName = if (per != null) per.showName else tag.tagName
+    val effCS = if (per != null) per.showCourseSpeed else tag.tagCourseSpeed
+    val effClass = if (per != null) per.showClass else tag.tagClass
+    val effAlt = if (per != null) per.showAltitude else tag.tagAltitude
+    val effDepth = if (per != null) per.showDepth else tag.tagDepth
+    val effUnitType = tag.tagUnitType
+    val effTrack = tag.tagTrackNum
     // R7 修复：按桌面版 9 项 TagXxx 开关拼装（桌面 Create*Tag 格式串）；
     // 无任何开关开启时不画
-    if (!tag.tagName && !tag.tagCourseSpeed && !tag.tagTrackNum && !tag.tagClass && !tag.tagUnitType &&
-        !tag.tagAltitude && !tag.tagDepth && !tag.tagCallsign && tag.additionalText.isBlank()) return
+    if (!effName && !effCS && !effTrack && !effClass && !effUnitType &&
+        !effAlt && !effDepth && !tag.tagCallsign && tag.additionalText.isBlank()) return
     val k = UnitRenderer.labelScaleK(zoom)
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    // #9：复用池画笔，按阵营色/字号覆盖后绘制（避免每单位每帧 new Paint）
+    val paint = ScenePaintPool.labelFill.apply {
         color = UnitRenderer.colorOf(u.side, palette)
         textSize = UnitRenderer.labelTextSize(zoom)
     }
     val parts = mutableListOf<String>()
     // 桌面格式："TN 123 x 4  名称" 风格，按开关拼装
-    if (tag.tagTrackNum) parts.add("TN ${u.trackNumber}")
-    if (tag.tagName && u.name.isNotEmpty()) parts.add(u.name)
-    if (tag.tagClass && u.unitClass.isNotEmpty()) parts.add(u.unitClass)
-    if (tag.tagUnitType && u.unitType.isNotEmpty()) parts.add(u.unitType)
-    if (tag.tagCourseSpeed) {
+    if (effTrack) parts.add("TN ${u.trackNumber}")
+    // P3-2 修复：标签呼叫号走 callsignOrName()（优先独立呼叫号、空串回退 Name），
+    // 此前直接用 u.name 导致 UnitEditSheet 配置的独立 callsign 在主海图标签不显示。
+    val cn = u.callsignOrName()
+    if (effName && cn.isNotEmpty()) parts.add(cn)
+    if (effClass && u.unitClass.isNotEmpty()) parts.add(u.unitClass)
+    if (effUnitType && u.unitType.isNotEmpty()) parts.add(u.unitType)
+    if (effCS) {
         parts.add("Course ${u.courseDeg().toInt()}°  Speed ${u.speedKnots().toInt()} kts")
     }
-    if (tag.tagAltitude && u.altitude != null) parts.add("Alt ${u.altitudeMeters()} m")
-    if (tag.tagDepth && u.depth != null) parts.add("Depth ${u.depthMeters()} m")
+    if (effAlt && u.altitude != null) parts.add("Alt ${u.altitudeMeters()} m")
+    if (effDepth && u.depth != null) parts.add("Depth ${u.depthMeters()} m")
     if (tag.tagCallsign && u.name.isNotEmpty()) parts.add(u.name)
     if (tag.additionalText.isNotBlank()) parts.add(tag.additionalText)
     val text = parts.joinToString("  ")
@@ -447,10 +473,12 @@ private fun drawUnitLabel(
         // G08：CheckBackground —— 文字下垫背景色矩形（桌面签名："Use background color under labels"）
         if (useLabelBackground) {
             val tw = paint.measureText(text)
-            val bg = android.graphics.Paint().apply {
-                color = backgroundColor.toInt()
-                style = android.graphics.Paint.Style.FILL
-            }
+            // #9：复用池画笔（背景矩形，改色即用）
+            // FIX-LABEL：背景改半透明（alpha≈33%），避免实心白底遮挡单位符号；
+            // 颜色仍取用户设置（RGB 部分），透明度固定 0x55。设为完全无遮挡可在设置中关闭标签背景。
+            val argb = backgroundColor.toInt()
+            val semi = (0x55000000 or (argb and 0x00FFFFFF)).toInt()
+            val bg = ScenePaintPool.labelBg.apply { color = semi }
             canvas.drawRect(tx - 4f, ty - paint.textSize + 2f, tx + tw + 4f, ty + 3f, bg)
         }
         canvas.drawText(text, tx, ty, paint)
@@ -460,15 +488,13 @@ private fun drawUnitLabel(
 /** 编队连线：同编队成员 ↔ 中心（细灰线，桌面版 ShowFormations）。
  *  G51：队形名标签（桌面版 SymbolGenerator.TextTags.DrawFormationName）——
  *  在编队中心单位上方绘制 formationName，阵营色 + 黑描边，随 zoom 缩放。 */
-private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit>, camera: Camera, w: Int, h: Int) {
+private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit>, camera: Camera, w: Int, h: Int,
+                               palette: UnitRenderer.Palette = UnitRenderer.Palette()) {
     val groups = units.filter { it.isInFormation == true || it.isFormationCenter == true }
         .groupBy { it.formationName ?: "" }
     if (groups.isEmpty()) return
-    val linePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(120, 140, 140, 140)
-        style = android.graphics.Paint.Style.STROKE
-        strokeWidth = 1f
-    }
+    // #9：复用池画笔（细灰线，样式字段已初始化）
+    val linePaint = ScenePaintPool.formationLine
     for ((name, members) in groups) {
         val center = members.firstOrNull { it.isFormationCenter == true } ?: members.firstOrNull() ?: continue
         val (cx, cy) = camera.worldToScreen(center.x, center.y, w, h)
@@ -479,7 +505,7 @@ private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit
         }
         // G51：队形名标签（桌面 DrawFormationName：编队名显示在画布上）
         if (name.isNotBlank()) {
-            drawFormationNameLabel(canvas, name, center, cx, cy, camera.zoom)
+            drawFormationNameLabel(canvas, name, center, cx, cy, camera.zoom, palette)
         }
     }
 }
@@ -491,21 +517,23 @@ private fun drawFormationLines(canvas: android.graphics.Canvas, units: List<Unit
  */
 private fun drawFormationNameLabel(
     canvas: android.graphics.Canvas, name: String, center: Unit,
-    cx: Float, cy: Float, zoom: Float
+    cx: Float, cy: Float, zoom: Float, palette: UnitRenderer.Palette = UnitRenderer.Palette()
 ) {
     val k = UnitRenderer.labelScaleK(zoom)
     val ty = cy - 18f * k
     // 越界跳过（视口外 ±200px 缓冲）
     if (cx < -200f || cx > canvas.width + 200f || ty < -200f || ty > canvas.height + 200f) return
-    val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = UnitRenderer.colorOf(center.side)
+    // #9/#19：复用池画笔；颜色走玩家自定义 palette（此前 colorOf(side) 单参硬编码默认调色板，
+    // 用户自定义蓝/红/中立色不会反映到队形名）
+    val fill = ScenePaintPool.formationNameFill.apply {
+        color = UnitRenderer.colorOf(center.side, palette)
         textSize = UnitRenderer.labelTextSize(zoom)
         textAlign = android.graphics.Paint.Align.CENTER
     }
-    val outline = android.graphics.Paint(fill).apply {
+    val outline = ScenePaintPool.formationNameOutline.apply {
         color = android.graphics.Color.BLACK
-        style = android.graphics.Paint.Style.STROKE
-        strokeWidth = 3f
+        textSize = UnitRenderer.labelTextSize(zoom)
+        textAlign = android.graphics.Paint.Align.CENTER
     }
     canvas.drawText(name, cx, ty, outline)
     canvas.drawText(name, cx, ty, fill)
@@ -521,33 +549,25 @@ private fun drawScaleBar(canvas: android.graphics.Canvas, camera: Camera, w: Int
     val x0 = w - px - 20f
     val y0 = h - 30f
     // 线条：白色实线 + 两端竖线刻度（与文字 paint 分离，不复用 STROKE 样式画字）
-    val linePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
-        style = android.graphics.Paint.Style.STROKE
-        strokeWidth = 2.5f
-    }
+    // #9：复用池画笔
+    val linePaint = ScenePaintPool.scaleLine
     canvas.drawLine(x0, y0, x0 + px, y0, linePaint)
     canvas.drawLine(x0, y0 - 6f, x0, y0 + 6f, linePaint)
     canvas.drawLine(x0 + px, y0 - 6f, x0 + px, y0 + 6f, linePaint)
     // 文字：白字 + 黑描边两遍画法（FILL 实心字，显式 textSize）
     val label = com.simplot.android.render.ScaleBar.label(nmi)
-    val strokePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.BLACK
-        style = android.graphics.Paint.Style.STROKE
-        strokeWidth = 4f
-        textSize = 20f
-    }
-    val fillPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
-        textSize = 20f
-    }
+    val strokePaint = ScenePaintPool.scaleLabelOutline
+    val fillPaint = ScenePaintPool.scaleLabelFill
     canvas.drawText(label, x0, y0 - 8f, strokePaint)
     canvas.drawText(label, x0, y0 - 8f, fillPaint)
 }
 
-/** 命中检测：返回被点中的单位（若有）。hitRadius 随 zoom 放大（契约7：与图标尺寸同链路，放大后易选中） */
-internal fun hitTest(units: List<Unit>, camera: Camera, pos: Offset, w: Int, h: Int, zoom: Float = camera.zoom): Unit? {
-    val hitRadius = max(20f, UnitRenderer.iconSizePx(zoom) * 1.2f)
+/** 命中检测：返回被点中的单位（若有）。hitRadius 随 zoom 放大并按 SymbolSize.scale 同步缩放（H1：与绘制链路一致） */
+internal fun hitTest(
+    units: List<Unit>, camera: Camera, pos: Offset, w: Int, h: Int, zoom: Float = camera.zoom,
+    symbolSizeScale: Float = 1f
+): Unit? {
+    val hitRadius = max(20f, UnitRenderer.iconSizePx(zoom) * symbolSizeScale * 1.2f)
     var best: Unit? = null
     var bestDist = hitRadius * hitRadius
     for (u in units) {
@@ -561,4 +581,112 @@ internal fun hitTest(units: List<Unit>, camera: Camera, pos: Offset, w: Int, h: 
         }
     }
     return best
+}
+
+/**
+ * #9/#25：渲染画笔复用池（G68 同策略：by lazy 惰性初始化——JVM 单测加载本类文件
+ * 不会因 android.jar stub 抛 ExceptionInInitializerError；主线程绘制，非线程安全可接受）。
+ * 每个使用点在绘制前按需覆盖 color/textSize/strokeWidth 等属性，避免每帧每单位 new Paint 的 GC 压力。
+ */
+private object ScenePaintPool {
+    /** 单位标签填充（阵营色，使用点改 color/textSize） */
+    val labelFill by lazy { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
+
+    /** 标签背景矩形（G08 CheckBackground；FILL 实心） */
+    val labelBg by lazy { android.graphics.Paint().apply { style = android.graphics.Paint.Style.FILL } }
+
+    /** 编队连线（细灰线） */
+    val formationLine by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(120, 140, 140, 140)
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 1f
+        }
+    }
+
+    /** 队形名标签填充（阵营色，CENTER） */
+    val formationNameFill by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textAlign = android.graphics.Paint.Align.CENTER }
+    }
+
+    /** 队形名标签黑描边（CENTER） */
+    val formationNameOutline by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.BLACK
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 3f
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+    }
+
+    /** 测量线（保留/临时，使用点改色/线宽；STROKE） */
+    val measureLine by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE }
+    }
+
+    /** 测量标签黑描边 */
+    val measureLabelOutline by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.BLACK
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 4f
+        }
+    }
+
+    /** 测量标签白填充 */
+    val measureLabelFill by lazy { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE } }
+
+    /** 单位距离辅助线（灰） */
+    val distLine by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(160, 90, 90, 90)
+            strokeWidth = 1.5f
+            style = android.graphics.Paint.Style.STROKE
+        }
+    }
+
+    /** 单位距离标签黑描边（CENTER） */
+    val distLabelOutline by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.BLACK
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 4f
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+    }
+
+    /** 单位距离标签白填充（CENTER） */
+    val distLabelFill by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+    }
+
+    /** 比例尺线条（白实线） */
+    val scaleLine by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 2.5f
+        }
+    }
+
+    /** 比例尺文字黑描边 */
+    val scaleLabelOutline by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.BLACK
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 4f
+            textSize = 20f
+        }
+    }
+
+    /** 比例尺文字白填充 */
+    val scaleLabelFill by lazy {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = 20f
+        }
+    }
 }

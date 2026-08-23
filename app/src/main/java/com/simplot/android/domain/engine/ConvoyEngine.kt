@@ -50,12 +50,17 @@ object ConvoyEngine {
      * @param nextId 为每个新单位生成 IdNum 的 lambda（调用方传）
      * @param nextTrackNumber 为每个新单位分配 TrackNumber 的 lambda（调用方传；
      *        N2 修复：必须走 TrackCounter 计数器写回，否则桌面续建单位会撞号）
+     * @param centerX 指挥舰世界坐标 X（#4 修复：默认 0；GameViewModel 传视野中心，
+     *        避免护航队整体落在 (0,0) 视野外——与 NewUnitDialog 默认=视野中心同源修复）
+     * @param centerY 指挥舰世界坐标 Y
      */
     fun build(
         file: ScenarioFile,
         spec: ConvoySpec,
         nextId: (prefix: String) -> String,
-        nextTrackNumber: (side: String) -> Int
+        nextTrackNumber: (side: String) -> Int,
+        centerX: Long = 0L,
+        centerY: Long = 0L
     ): List<Unit> {
         val commodore = Unit(
             idNum = nextId("S"),
@@ -64,6 +69,8 @@ object ConvoyEngine {
             unitClass = "AO",
             name = spec.commodoreName,
             trackNumber = nextTrackNumber(spec.side),
+            x = centerX,
+            y = centerY,
             isNewThisTurn = true,
             isFormationCenter = true,
             formationName = spec.formationName

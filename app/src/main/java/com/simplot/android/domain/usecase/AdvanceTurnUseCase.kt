@@ -41,8 +41,12 @@ object AdvanceTurnUseCase {
         val rangeExhausted = file.units
             .filter { it.range == 0 && !it.showSunk && !it.ignoreRange }
             .map { it.idNum }
+        // #6（G40）修复：消费 MovementEngine.advance 设置的精确标记 reachedFinalWaypoint，
+        // 仅"本回合消费了最后一个未来航路点"的单位触发弹窗（桌面 NoFutureWaypoints 语义）。
+        // 此前用过宽条件（futureWaypointArray 空 && pastWaypointArray 非空），
+        // 会把从未设航线的单位（历史有轨迹、当前无未来航路点）每回合误报。
         val finalWpReached = file.units
-            .filter { it.futureWaypointArray.isEmpty() && it.pastWaypointArray.isNotEmpty() }
+            .filter { it.reachedFinalWaypoint && !it.showSunk }
             .map { it.idNum }
 
         return Result(
@@ -67,9 +71,9 @@ object AdvanceTurnUseCase {
         return true
     }
 
-    /** 单位是否到达最终航路点（供弹窗/测试） */
+    /** 单位是否到达最终航路点（供弹窗/测试）；读引擎精确标记 reachedFinalWaypoint（与 execute 判定一致） */
     fun hasReachedFinalWaypoint(file: ScenarioFile, idNum: String): Boolean {
         val u = file.units.firstOrNull { it.idNum == idNum } ?: return false
-        return u.futureWaypointArray.isEmpty() && u.pastWaypointArray.isNotEmpty()
+        return u.reachedFinalWaypoint
     }
 }

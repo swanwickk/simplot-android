@@ -3,26 +3,16 @@ package com.simplot.android.render
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import com.simplot.android.data.model.Sensor
+import android.graphics.Path
+import android.graphics.RectF
 import com.simplot.android.data.model.Unit
-import com.simplot.android.data.model.Weapon
 
 /**
- * G23 弧固定排序（桌面 ContainerSensors/ContainerWeapons 的列表顺序即绘制顺序；
- * 安卓弧编辑器暂无上移/下移 UI，此处用确定性键序保证绘制顺序跨会话稳定）：
- * startAngle 升序 → maxRange 升序（同角小半径先画，重叠时大弧盖小弧）。
- * 返回新列表，不改原数组；顶层纯函数 → 可 JVM 单测。
+ * G23 弧顺序（桌面 ContainerSensors/ContainerWeapons 语义：**列表顺序即绘制顺序**）。
+ *
+ * v0.6.1 修复：删除 v0.6.0 的「绘制期 startAngle 排序」——那与桌面"用户列表顺序"语义偏离；
+ * 现由 ArcEditorDialog 提供 ↑/↓ 上移/下移重排（moveItem），渲染按数组原序直绘。
  */
-fun <T> sortedArcs(arcs: List<T>, startAngleOf: (T) -> Double, maxRangeOf: (T) -> Double): List<T> =
-    arcs.sortedWith(compareBy(startAngleOf, maxRangeOf))
-
-/** G23 便捷入口：传感器弧排序（null 视为空列表） */
-fun sortedSensorArcs(arcs: List<Sensor>?): List<Sensor> =
-    sortedArcs(arcs.orEmpty(), { it.startAngle }, { it.maxRange })
-
-/** G23 便捷入口：武器弧排序（null 视为空列表） */
-fun sortedWeaponArcs(arcs: List<Weapon>?): List<Weapon> =
-    sortedArcs(arcs.orEmpty(), { it.startAngle }, { it.maxRange })
 
 /**
  * 传感器/武器射程弧渲染器（对应桌面版 Sensors / Weapons 显示）。
@@ -35,6 +25,10 @@ fun sortedWeaponArcs(arcs: List<Weapon>?): List<Weapon> =
  *
  * 渲染：以单位为中心画弧（扇形），0° 指向单位航向，顺时针。
  * 半径 = MaxRange（海里 → 文件单位 ×100000）。
+ *
+ * P3-1 修复（G68 补齐）：画笔/Path/RectF 复用为实例字段（by lazy 惰性初始化，
+ * JVM 单测加载类不触发 android.jar stub 的 ExceptionInInitializerError，
+ * 与 UnitRenderer/MapRenderer 同策略）；每帧每弧不再 new Paint/Path/RectF。
  */
 object ArcRenderer {
 
@@ -53,21 +47,27 @@ object ArcRenderer {
         }
     }
 
+    // ---- P3-1：复用画笔/路径（主线程串行绘制，字段复用无并发冲突） ----
+    private val arcPaint by lazy { Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f } }
+    private val ringPath by lazy { Path() }
+    private val outerRect by lazy { RectF() }
+    private val innerRect by lazy { RectF() }
+
     fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int,
              showSensors: Boolean = true, showWeapons: Boolean = true) {
         val (cx, cy) = camera.worldToScreen(u.x, u.y, canvasW, canvasH)
         val headingRad = Math.toRadians(u.courseDeg())
 
-        // 传感器弧（G23：按固定顺序绘制——startAngle 升序 → maxRange 升序）
+        // 传感器弧（G23：按桌面列表原序绘制——编辑器可 ↑/↓ 重排）
         if (showSensors) {
-            sortedSensorArcs(u.sensorArray).forEach { s ->
+            u.sensorArray.orEmpty().forEach { s ->
                 if (!s.isVisible) return@forEach
                 drawArc(canvas, cx, cy, s.minRange, s.maxRange, s.startAngle, s.arcAngle, headingRad, s.isFilled, s.arcColor, camera)
             }
         }
-        // 武器弧（G23：同传感器固定顺序）
+        // 武器弧（G23：按桌面列表原序绘制）
         if (showWeapons) {
-            sortedWeaponArcs(u.weaponArray).forEach { w ->
+            u.weaponArray.orEmpty().forEach { w ->
                 if (!w.isVisible) return@forEach
                 drawArc(canvas, cx, cy, w.minRange, w.maxRange, w.startAngle, w.arcAngle, headingRad, w.isFilled, w.arcColor, camera)
             }
@@ -87,12 +87,11 @@ object ArcRenderer {
         val radiusMax = (maxRangeNm * 100000.0 * camera.zoom).toFloat()
         val radiusMin = (minRangeNm * 100000.0 * camera.zoom).toFloat()
 
-        val style = if (filled) Paint.Style.FILL else Paint.Style.STROKE
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // P3-1：复用画笔，按需改色/样式
+        val paint = arcPaint.apply {
             this.color = if (filled) Color.argb(60, Color.red(color), Color.green(color), Color.blue(color))
                          else Color.argb(200, Color.red(color), Color.green(color), Color.blue(color))
-            this.style = style
-            strokeWidth = 2f
+            this.style = if (filled) Paint.Style.FILL else Paint.Style.STROKE
         }
 
         // 弧：从 (航向+StartAngle) 顺时针扫 ArcAngle 度
@@ -104,21 +103,26 @@ object ArcRenderer {
             // R2 修复：MinRange>0 时画 min~max 双半径环带（桌面 DrawSensorArc 逐点双半径路径）；
             // 用 even-odd 填充：外弧 + 内弧反向构成环带，不再用白挖洞
             if (radiusMin > 0f) {
-                val path = android.graphics.Path().apply {
-                    val outer = android.graphics.RectF(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
-                    addArc(outer, startDeg, sweep)
-                    val inner = android.graphics.RectF(cx - radiusMin, cy - radiusMin, cx + radiusMin, cy + radiusMin)
-                    addArc(inner, startDeg + sweep, -sweep)
-                    close()
-                }
+                // P3-1：复用 Path/RectF，先 reset 再构建
+                val path = ringPath
+                path.reset()
+                val outer = outerRect
+                outer.set(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
+                path.addArc(outer, startDeg, sweep)
+                val inner = innerRect
+                inner.set(cx - radiusMin, cy - radiusMin, cx + radiusMin, cy + radiusMin)
+                path.addArc(inner, startDeg + sweep, -sweep)
+                path.close()
                 canvas.drawPath(path, paint)
             } else {
-                val rect = android.graphics.RectF(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
+                val rect = outerRect
+                rect.set(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
                 canvas.drawArc(rect, startDeg, sweep, true, paint)
             }
         } else {
             // 未填充：只描外弧线（useCenter=false，避免画出到圆心的两条半径线）
-            val rect = android.graphics.RectF(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
+            val rect = outerRect
+            rect.set(cx - radiusMax, cy - radiusMax, cx + radiusMax, cy + radiusMax)
             canvas.drawArc(rect, startDeg, sweep, false, paint)
         }
     }

@@ -16,6 +16,16 @@ import com.simplot.android.data.model.Unit
  */
 object BearingRenderer {
 
+    /** #9：复用画笔（主方位线；使用点改色）——G68 惰性初始化保持 JVM 可测 */
+    private val linePaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f }
+    }
+
+    /** #9：复用画笔（波束边界线，更淡更细） */
+    private val edgePaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; alpha = 90 }
+    }
+
     /**
      * G45：波束宽度边界方位角（纯函数可单测）：中心方位 ± beamWidth/2。
      * beamWidth<=0 时两条边界与中心重合（调用方据此判断不画边线）。
@@ -42,11 +52,8 @@ object BearingRenderer {
             if (isSonar && !showSonar) continue
             if (!isSonar && !showEs) continue
             val baseColor = if (isSonar) Color.argb(140, 40, 120, 220) else Color.argb(140, 200, 160, 40)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = baseColor
-                style = Paint.Style.STROKE
-                strokeWidth = 1.5f
-            }
+            // #9：复用池画笔，按需改色
+            val paint = linePaint.apply { color = baseColor }
             val rad = Math.toRadians(b.bearing)
             // 屏显长度：BeamLength(海里)×zoom；0 时默认 80px
             val lenPx = if (b.beamLength > 0) (b.beamLength * 100000.0 * camera.zoom).toFloat() else 80f
@@ -57,12 +64,7 @@ object BearingRenderer {
             // G45：波束宽度 >0 → 两条边界线（更淡、更细）
             if (b.beamWidth > 0.0) {
                 val (lo, hi) = beamEdgeBearings(b.bearing, b.beamWidth)
-                val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = baseColor
-                    style = Paint.Style.STROKE
-                    strokeWidth = 1f
-                    alpha = 90
-                }
+                val edgePaint = this@BearingRenderer.edgePaint.apply { color = baseColor }
                 for (edge in listOf(lo, hi)) {
                     val er = Math.toRadians(edge)
                     val eeX = cx + lenPx * Math.sin(er).toFloat()

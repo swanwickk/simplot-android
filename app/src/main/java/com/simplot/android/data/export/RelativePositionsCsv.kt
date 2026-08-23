@@ -2,6 +2,7 @@ package com.simplot.android.data.export
 
 import com.simplot.android.data.model.Unit
 import com.simplot.android.data.util.CoordUtil
+import java.util.Locale
 
 /**
  * 相对位置 CSV 导出（桌面版 ExportData.RelativeUnitPositions.Export 格式）。
@@ -60,9 +61,10 @@ object RelativePositionsCsv {
             val altDepth = u.altitudeMeters() ?: u.depthMeters() ?: 0
             sb.append("${u.trackNumber},")
             sb.append("${u.x},${u.y},")
-            sb.append("${String.format("%.0f", u.courseDeg())},${String.format("%.0f", u.speedKnots())},$altDepth,")
-            sb.append("${String.format("%.1f", bearing)},${String.format("%.2f", distNm)},")
-            sb.append("${String.format("%.1f", distYards)},${String.format("%.1f", distMeters)}\n")
+            // #15 修复：显式 Locale.US，避免其他 locale 十进制分隔符差异导致 CSV 数值列异常
+            sb.append("${String.format(Locale.US, "%.0f", u.courseDeg())},${String.format(Locale.US, "%.0f", u.speedKnots())},$altDepth,")
+            sb.append("${String.format(Locale.US, "%.1f", bearing)},${String.format(Locale.US, "%.2f", distNm)},")
+            sb.append("${String.format(Locale.US, "%.1f", distYards)},${String.format(Locale.US, "%.1f", distMeters)}\n")
         }
         return sb.toString()
     }

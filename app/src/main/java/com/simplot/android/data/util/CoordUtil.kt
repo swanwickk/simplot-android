@@ -57,4 +57,28 @@ object CoordUtil {
 
     /** 航速(节) × 时长(分钟) → 海里距离 */
     fun distNm(speedKnots: Double, minutes: Double): Double = speedKnots * minutes / 60.0
+
+    /** 距离单位：海里(nm) / 码(yd) / 米(m) */
+    enum class DistanceUnit(val code: String, val label: String) {
+        NM("nm", "海里"),
+        YD("yd", "码"),
+        M("m", "米");
+
+        fun next(): DistanceUnit = when (this) {
+            NM -> YD
+            YD -> M
+            M -> NM
+        }
+    }
+
+    /** 格式化海里距离为指定单位字符串（Locale.US） */
+    fun formatDistance(distNm: Double, unit: DistanceUnit): String = when (unit) {
+        DistanceUnit.NM -> String.format(java.util.Locale.US, "%.1f nm", distNm)
+        DistanceUnit.YD -> String.format(java.util.Locale.US, "%.0f yd", distNm * YARDS_PER_NMI)
+        DistanceUnit.M -> {
+            val m = distNm * 1852.0
+            if (m >= 10000.0) String.format(java.util.Locale.US, "%.1f km", m / 1000.0)
+            else String.format(java.util.Locale.US, "%.0f m", m)
+        }
+    }
 }

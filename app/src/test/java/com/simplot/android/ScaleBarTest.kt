@@ -4,6 +4,7 @@ import com.simplot.android.render.ScaleBar
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 /**
  * G17：比例尺动态数值测试（1-2-5 序列取整 / 像素长度界 / 随 zoom 变化 / 标签格式）。
@@ -49,6 +50,21 @@ class ScaleBarTest {
         assertEquals("2 nmi", ScaleBar.label(2.0))
         assertEquals("0.5 nmi", ScaleBar.label(0.5))
         assertEquals("0.05 nmi", ScaleBar.label(0.05))
+    }
+
+    @Test
+    fun `label uses US decimal separator regardless of locale`() {
+        // P3-3 修复回归：显式 Locale.US，德/法等 locale（逗号小数点）下比例尺文字仍用英文点号。
+        val default = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.GERMANY)
+            assertEquals("0.5 nmi", ScaleBar.label(0.5))
+            assertEquals("2 nmi", ScaleBar.label(2.0))
+            Locale.setDefault(Locale.FRANCE)
+            assertEquals("0.05 nmi", ScaleBar.label(0.05))
+        } finally {
+            Locale.setDefault(default)
+        }
     }
 
     @Test

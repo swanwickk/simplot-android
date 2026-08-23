@@ -30,7 +30,10 @@ data class ScenarioFile(
     @Transient var undoSnapshot: List<Unit>? = null,
 
     /** 瞬态：Do 前 Objects 数组快照（E5 修复：undo 不得用 units 重建 objects） */
-    @Transient var undoObjects: MutableList<String>? = null
+    @Transient var undoObjects: MutableList<String>? = null,
+
+    /** 瞬态：R3 Do 时 interval 快照（Next 确认写 Turns 时复用，避免 Do→改档→Next 区间不一致） */
+    @Transient var lastTurnInterval: TurnInterval? = null
 ) {
     companion object {
         fun fresh(): ScenarioFile = ScenarioFile()

@@ -1,55 +1,72 @@
 package com.simplot.android
 
 import com.simplot.android.render.MapDataParser
-import kotlin.math.roundToLong
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.roundToLong
 
 /**
- * 光栅地图解析测试（R5：桌面版 MercatorRaster .map/.txt 格式）。
+ * 光栅地图 .txt 解析与中心锚定换算测试（桌面版 MercatorRaster 格式）。
+ * 覆盖「第三次所罗门海战.txt」真实桌面样例：MAP=第三次所罗门海战.jpg / SCALE=20.3。
  */
 class RasterMapParseTest {
 
-    private val sampleMap = """
-        MAP = pacific.png
-        SCALE = 3.071
-        CITY = Honolulu|100|200
-        CITY = Pearl Harbor|150|220
-        COUNTRY = USA|10|10
-    """.trimIndent()
+    private val sampleRaster = "MAP=第三次所罗门海战.jpg\r\nSCALE=20.3"
 
     @Test
-    fun `parses map name and scale`() {
+    fun `raster map parses map name and scale`() {
         val p = MapDataParser()
         val mapName = StringBuilder()
-        val ok = p.parseRasterMap(sampleMap, mapName)
+        val ok = p.parseRasterMap(sampleRaster, mapName)
         assertTrue(ok)
-        assertEquals("pacific.png", mapName.toString())
+        assertEquals("第三次所罗门海战.jpg", mapName.toString())
+        // SCALE（像素/海里）记录到 mapScale 供底图定位换算
+        assertEquals(20.3, p.mapScale, 0.001)
     }
 
     @Test
-    fun `parses city and country labels`() {
+    fun `raster map with city country parses labels and centers to origin`() {
+        val text = """
+            MAP=TestMap.jpg
+            SCALE=3.071
+            CITY=Honiara|100|200
+            COUNTRY=Solomon|50|60
+        """.trimIndent()
         val p = MapDataParser()
-        p.parseRasterMap(sampleMap)
-        assertEquals(2, p.cityLabels.size)
-        assertEquals("Honolulu", p.cityLabels[0].first)
-        assertEquals("USA", p.countryLabels[0].first)
-        // 坐标按 SCALE 换算（R6/D4：桌面 SimPlotX ← 像素 ÷ Scale，再 ×10 转存档坐标，四舍五入）
-        val expected = (100 / 3.071 * 10).roundToLong()
-        assertEquals(expected, p.cityLabels[0].second)
+        val mapName = StringBuilder()
+        val ok = p.parseRasterMap(text, mapName)
+        assertTrue(ok)
+        assertEquals("TestMap.jpg", mapName.toString())
+        assertEquals(1, p.rasterCityPixels.size)
+        assertEquals(1, p.rasterCountryPixels.size)
+
+        // 底图加载后中心化：图宽 1000 x 800
+        p.applyRasterCenter(1000, 800)
+        assertEquals(1, p.cityLabels.size)
+        assertEquals("Honiara", p.cityLabels[0].first)
+        // wx = (100 - 500) / 3.071 * 100000 = -13025073
+        // wy = (400 - 200) / 3.071 * 100000 = 6512537
+        val expectedCityX = ((-400.0) / 3.071 * 100000.0).roundToLong()
+        val expectedCityY = (200.0 / 3.071 * 100000.0).roundToLong()
+        assertEquals(expectedCityX, p.cityLabels[0].second)
+        assertEquals(expectedCityY, p.cityLabels[0].third)
+
+        assertEquals(1, p.countryLabels.size)
+        assertEquals("Solomon", p.countryLabels[0].first)
+        val expectedCountryX = ((50.0 - 500.0) / 3.071 * 100000.0).roundToLong()
+        val expectedCountryY = ((400.0 - 60.0) / 3.071 * 100000.0).roundToLong()
+        assertEquals(expectedCountryX, p.countryLabels[0].second)
+        assertEquals(expectedCountryY, p.countryLabels[0].third)
     }
 
     @Test
-    fun `missing scale returns false`() {
+    fun `raster map without scale returns false`() {
         val p = MapDataParser()
-        assertFalse(p.parseRasterMap("MAP = x.png"))
-    }
-
-    @Test
-    fun `empty text is safe`() {
-        val p = MapDataParser()
-        assertFalse(p.parseRasterMap(""))
+        val mapName = StringBuilder()
+        val ok = p.parseRasterMap("MAP=NoScale.jpg", mapName)
+        assertFalse(ok)
+        assertEquals("NoScale.jpg", mapName.toString())
     }
 }

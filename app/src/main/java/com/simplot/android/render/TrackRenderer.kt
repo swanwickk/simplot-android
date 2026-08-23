@@ -13,6 +13,39 @@ import com.simplot.android.data.model.Unit
  */
 object TrackRenderer {
 
+    /** #9：复用画笔（历史轨迹线；使用点改阵营色）——G68 惰性初始化保持 JVM 可测 */
+    private val pastLinePaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f; alpha = 170 }
+    }
+
+    /** #9：复用画笔（历史轨迹圆点） */
+    private val pastDotPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; alpha = 200 }
+    }
+
+    /** #9：复用画笔（未来航路点空心圆环） */
+    private val futureRingPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f }
+    }
+
+    /** #9：复用画笔（未来航路点序号） */
+    private val futureNumPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 11f
+            textAlign = Paint.Align.CENTER
+            isFakeBoldText = true
+        }
+    }
+
+    /** N1/D8：Neutral/All 白系前景在白底上描深色边保证可见（适配浅色底图） */
+    private val outlinePaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF333333.toInt()
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f
+        }
+    }
+
     fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int,
              palette: UnitRenderer.Palette = UnitRenderer.Palette()) {
         drawPast(canvas, u, camera, canvasW, canvasH, palette)
@@ -24,23 +57,17 @@ object TrackRenderer {
         val past = u.pastWaypointArray
         if (past.isEmpty()) return
 
-        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = UnitRenderer.colorOf(u.side, palette)
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-            alpha = 170
-        }
-        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = UnitRenderer.colorOf(u.side, palette)
-            style = Paint.Style.FILL
-            alpha = 200
-        }
+        // #9：复用池画笔，按阵营色覆盖
+        val linePaint = pastLinePaint.apply { color = UnitRenderer.colorOf(u.side, palette) }
+        val dotPaint = pastDotPaint.apply { color = UnitRenderer.colorOf(u.side, palette) }
+        // N1：Neutral/All 历史轨迹圆点亦描深色边（与未来环一致）
 
         var prev: Pair<Float, Float>? = null
         for (wp in past) {
             val (sx, sy) = camera.worldToScreen(wp.x, wp.y, canvasW, canvasH)
             // 轨迹点小圆点（历史位置标记，桌面版 TrackHistory）
             canvas.drawCircle(sx, sy, 3f, dotPaint)
+            if (UnitRenderer.needsOutline(u.side)) canvas.drawCircle(sx, sy, 3f, outlinePaint)
             if (prev != null) {
                 canvas.drawLine(prev.first, prev.second, sx, sy, linePaint)
             }
@@ -60,21 +87,14 @@ object TrackRenderer {
         if (future.isEmpty()) return
 
         val color = UnitRenderer.colorOf(u.side, palette)
-        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-        val num = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color
-            textSize = 11f
-            textAlign = Paint.Align.CENTER
-            isFakeBoldText = true
-        }
+        // #9：复用池画笔，按阵营色覆盖
+        val ring = futureRingPaint.apply { this.color = color }
+        val num = futureNumPaint.apply { this.color = color }
         future.forEachIndexed { i, wp ->
             val (sx, sy) = camera.worldToScreen(wp.x, wp.y, canvasW, canvasH)
             if (sx in -80f..canvasW + 80f && sy in -80f..canvasH + 80f) {
                 canvas.drawCircle(sx, sy, 6f, ring)
+                if (UnitRenderer.needsOutline(u.side)) canvas.drawCircle(sx, sy, 6f, outlinePaint)
                 canvas.drawText((i + 1).toString(), sx, sy + 4f, num)
             }
         }

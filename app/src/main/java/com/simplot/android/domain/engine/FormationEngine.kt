@@ -2,7 +2,6 @@ package com.simplot.android.domain.engine
 
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
-import com.simplot.android.data.model.Waypoint
 
 /**
  * 编队引擎（R6，桌面版 Formations.Movement 对应）。
@@ -35,7 +34,8 @@ object FormationEngine {
     /**
      * 编队移动准备（桌面版 DoPrepare）：为中心外每个成员备份当前未来航路点
      * （E12 修复：取消时要恢复原航路点，桌面版 CancelMovement 用 CopyWayPoint 恢复），
-     * 并记录移动前位置到 PastWaypointArray（供 Cancel 恢复 + 轨迹）。
+     * 并记录移动前位置（#22 修复：改用瞬态字段 formationPrepPosition 而非向 PastWaypointArray
+     * 加轨迹点，避免 DO_BEFORE 状态下准备编队被 TurnState.detect 误判为"回合已确认"）。
      * @return 处理了多少成员
      */
     fun prepare(units: List<Unit>, formationName: String): Int {
@@ -43,28 +43,26 @@ object FormationEngine {
         for (m in membersOf(units, formationName)) {
             // E12：备份未来航路点（取消时恢复，而不是清空）
             m.formationWaypointBackup = m.futureWaypointArray.toMutableList()
-            // 记录移动前位置到 PastWaypointArray（供 Cancel 恢复 + 轨迹）
-            if (m.pastWaypointArray.none { it.x == m.x && it.y == m.y }) {
-                m.pastWaypointArray.add(Waypoint(x = m.x, y = m.y, number = 1, isTurnTime = true))
-                count++
-            }
+            // #22：记录移动前位置到瞬态字段（供 Cancel 恢复；不产生状态机轨迹）
+            m.formationPrepPosition = m.x to m.y
+            count++
         }
         return count
     }
 
     /**
-     * 编队移动撤销（桌面版 DoCancel）：把成员恢复到移动前位置（从 PastWaypointArray 末尾取），
+     * 编队移动撤销（桌面版 DoCancel）：把成员恢复到移动前位置（formationPrepPosition），
      * 并恢复 prepare 时备份的未来航路点（E12 修复，原实现直接清空会丢成员规划航线）。
      * @return 恢复的成员数
      */
     fun cancel(units: List<Unit>, formationName: String): Int {
         var count = 0
         for (m in membersOf(units, formationName)) {
-            val prev = m.pastWaypointArray.lastOrNull()
+            val prev = m.formationPrepPosition
             if (prev != null) {
-                m.x = prev.x
-                m.y = prev.y
-                m.pastWaypointArray.removeAt(m.pastWaypointArray.size - 1)
+                m.x = prev.first
+                m.y = prev.second
+                m.formationPrepPosition = null
                 // E12：恢复备份的未来航路点；无备份时清空（旧行为兜底）
                 m.futureWaypointArray = m.formationWaypointBackup?.toMutableList() ?: mutableListOf()
                 m.formationWaypointBackup = null
@@ -153,7 +151,12 @@ object FormationEngine {
     fun setCenter(units: List<Unit>, formationName: String, unitId: String): Boolean {
         if (units.none { it.idNum == unitId && it.formationName == formationName }) return false
         for (u in units) {
-            if (u.formationName == formationName && u.isFormationCenter == true) u.isFormationCenter = null
+            // #2 修复：旧中心被降级后回置为普通成员（isInFormation=true），
+            // 否则其 isInFormation 与 isFormationCenter 均为 null → 成"孤岛"不再随编队移动
+            if (u.formationName == formationName && u.isFormationCenter == true) {
+                u.isFormationCenter = null
+                u.isInFormation = true
+            }
         }
         val target = units.first { it.idNum == unitId }
         target.isFormationCenter = true

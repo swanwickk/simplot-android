@@ -117,13 +117,14 @@ class ScenarioRepository(private val context: Context) {
      */
     fun parentTreeUri(documentUri: Uri): Uri? {
         return try {
+            if (DocumentsContract.isTreeUri(documentUri)) {
+                return documentUri
+            }
             val docId = DocumentsContract.getDocumentId(documentUri)
             val slash = docId.lastIndexOf('/')
             val parentId = if (slash >= 0) docId.substring(0, slash) else docId
             // tree uri = content://authority/tree/<parentId>
-            val treeUri = DocumentsContract.buildTreeDocumentUri(documentUri.authority, parentId)
-            // 校验可写（部分 provider 根目录不支持，交给调用方容错）
-            treeUri
+            DocumentsContract.buildTreeDocumentUri(documentUri.authority, parentId)
         } catch (e: Exception) {
             null
         }
@@ -260,14 +261,16 @@ class ScenarioRepository(private val context: Context) {
 
     /**
      * 自动存档（桌面版 SaveAuto）："Referee Turn N_<回合时间>.json" 写到场景同目录。
-     * P2-3 修复：时间源 = 当前回合时间（currentTurnTime，桌面版 SaveAuto 反汇编确认），
-     * 冒号替换为下划线（桌面 String._ReplaceAll(':', '_')）。
+     * P2-3 修复：冒号替换为下划线（桌面 String._ReplaceAll(':', '_')）。
+     * #20 修复：时间源 = currentPositionTime（而非 currentTurnTime）——桌面「下一回合」流程是
+     * 先推进时间再调 SaveAuto，存档名时间 = 推进后的回合时间；安卓 Do 只推 PositionTime、
+     * TurnTime 待 Next 才追上，若取 currentTurnTime 会得到上一回合时间 → 文件名滞后一回合。
      * 目标目录由 target 文件 URI 推导（复用 parentTreeUri）。
      */
     fun saveAuto(targetFileUri: Uri, data: ScenarioFile, turnNumber: Int): Boolean {
         val parent = parentTreeUri(targetFileUri) ?: return false
-        val turnTime = data.time.currentTurnTime.replace(':', '_')
-        val name = "Referee Turn ${turnNumber}_$turnTime.json"
+        val stamp = data.time.currentPositionTime.replace(':', '_')
+        val name = "Referee Turn ${turnNumber}_$stamp.json"
         return try {
             saveJson(childOrCreate(parent, name), data.copy(file = "Referee"))
             true
@@ -309,14 +312,19 @@ class ScenarioRepository(private val context: Context) {
         } catch (e: Exception) {
             directory   // 非 tree uri（如已有 document uri）直接使用
         }
+        val mime = if (name.endsWith(".json", ignoreCase = true)) "application/json" else "application/octet-stream"
         return DocumentsContract.createDocument(
-            context.contentResolver, parent, "application/octet-stream", name
+            context.contentResolver, parent, mime, name
         ) ?: throw IllegalStateException("无法在所选目录创建文件：$name")
     }
 
-    /** 在 tree uri 目录中按显示名查找子文档 */
-    private fun findChild(directory: Uri, name: String): Uri? {
-        val treeId = DocumentsContract.getTreeDocumentId(directory)
+    /** 在 tree uri 目录中按显示名查找子文档（忽略大小写） */
+    fun findChild(directory: Uri, name: String): Uri? {
+        val treeId = try {
+            DocumentsContract.getTreeDocumentId(directory)
+        } catch (e: Exception) {
+            return null
+        }
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directory, treeId)
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -324,27 +332,119 @@ class ScenarioRepository(private val context: Context) {
         )
         return try {
             context.contentResolver.query(childrenUri, projection, null, null, null)?.use { c ->
+                val nameIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val idIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                if (nameIdx < 0 || idIdx < 0) return null
                 while (c.moveToNext()) {
-                    val display = c.getString(c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
-                    if (display == name) {
-                        val docId = c.getString(c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                    val display = c.getString(nameIdx)
+                    if (display.equals(name, ignoreCase = true)) {
+                        val docId = c.getString(idIdx)
                         return DocumentsContract.buildDocumentUriUsingTree(directory, docId)
                     }
                 }
                 null
-            } ?: null
+            }
         } catch (e: Exception) {
             null
         }
     }
 
-    private fun readBytes(uri: Uri): ByteArray {
-        val input: InputStream = context.contentResolver.openInputStream(uri)
+    /** 在 tree uri 目录中按文件名谓词查找第一个匹配的子文档（仅文件，不含子目录） */
+    fun findFirstChild(directory: Uri, predicate: (String) -> Boolean): Uri? {
+        val treeId = try {
+            DocumentsContract.getTreeDocumentId(directory)
+        } catch (e: Exception) {
+            return null
+        }
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directory, treeId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        )
+        return try {
+            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { c ->
+                val nameIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val idIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val mimeIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                if (nameIdx < 0 || idIdx < 0) return null
+                while (c.moveToNext()) {
+                    val display = c.getString(nameIdx) ?: continue
+                    // 跳过目录
+                    if (mimeIdx >= 0 && c.getString(mimeIdx) == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    if (predicate(display)) {
+                        val docId = c.getString(idIdx)
+                        return DocumentsContract.buildDocumentUriUsingTree(directory, docId)
+                    }
+                }
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 在 URI 所在同级目录按文件名查找文件（对齐桌面版同目录查找）。
+     * 支持：
+     * 1. SAF Tree URI / Document URI（推导 parentTreeUri 并通过 findChild 查询显示名）
+     * 2. file:// URI / 本地文件路径
+     */
+    fun findSibling(uri: Uri, name: String): Uri? {
+        if (uri.scheme == "file") {
+            val path = uri.path ?: return null
+            val file = java.io.File(path)
+            val parent = file.parentFile ?: return null
+            val target = java.io.File(parent, name)
+            if (target.exists()) return Uri.fromFile(target)
+            // 忽略大小写查找
+            val match = parent.listFiles()?.firstOrNull { it.name.equals(name, ignoreCase = true) }
+            return match?.let { Uri.fromFile(it) }
+        }
+
+        // SAF 目录 / document 处理
+        return try {
+            val treeUri = if (DocumentsContract.isTreeUri(uri)) uri else parentTreeUri(uri)
+            if (treeUri != null) {
+                findChild(treeUri, name)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 安全打开 URI 输入流（支持 content:// 与 file://） */
+    fun openInputStream(uri: Uri): InputStream? {
+        return try {
+            if (uri.scheme == "file") {
+                val path = uri.path ?: return null
+                java.io.FileInputStream(java.io.File(path))
+            } else {
+                context.contentResolver.openInputStream(uri)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 安全读取 URI 文本（支持 content:// 与 file://） */
+    fun readText(uri: Uri): String? {
+        return try {
+            openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun readBytes(uri: Uri): ByteArray {
+        val input: InputStream = openInputStream(uri)
             ?: throw IllegalStateException("无法打开文件")
         input.use { return it.readBytes() }
     }
 
-    private fun writeBytes(uri: Uri, bytes: ByteArray) {
+    fun writeBytes(uri: Uri, bytes: ByteArray) {
         val output: OutputStream = context.contentResolver.openOutputStream(uri, "w")
             ?: throw IllegalStateException("无法写入文件")
         output.use { it.write(bytes) }

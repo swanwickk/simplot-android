@@ -36,9 +36,10 @@ class FormationEngineTest {
         val f = convoyScenario()
         val n = FormationEngine.prepare(f.units, "Convoy")
         assertEquals(2, n)
-        // 每个成员都有移动前位置记录
-        assertTrue(f.units[1].pastWaypointArray.isNotEmpty())
-        assertTrue(f.units[2].pastWaypointArray.isNotEmpty())
+        // #22 修复：移动前位置记录在瞬态字段 formationPrepPosition（不向 PastWaypointArray
+        // 加轨迹点，避免 DO_BEFORE 状态被 TurnState.detect 误判为"回合已确认"）
+        assertEquals(Pair(100L, 0L), f.units[1].formationPrepPosition)
+        assertEquals(Pair(-100L, 0L), f.units[2].formationPrepPosition)
     }
 
     @Test
@@ -132,9 +133,12 @@ class FormationEngineTest {
         assertTrue(FormationEngine.setCenter(f.units, "Convoy", "S002"))
         assertTrue(f.units[1].isFormationCenter == true)
         assertTrue(f.units[0].isFormationCenter != true)
-        // 中心不属于成员：只剩 S003 一个成员
-        assertEquals(1, FormationEngine.membersOf(f.units, "Convoy").size)
-        assertEquals("S003", FormationEngine.membersOf(f.units, "Convoy")[0].idNum)
+        // #2 修复：旧中心降级后回置为普通成员（isInFormation=true），不成为脱离编队的孤岛
+        assertTrue(f.units[0].isInFormation == true)
+        // 成员 = 旧中心(S001) + S003；新中心 S002 不属于成员
+        val members = FormationEngine.membersOf(f.units, "Convoy")
+        assertEquals(2, members.size)
+        assertTrue(members.all { it.idNum != "S002" })
     }
 
     @Test

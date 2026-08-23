@@ -14,6 +14,24 @@ import com.simplot.android.domain.model.MiscAnnotation
  */
 object MiscAnnotationRenderer {
 
+    /** #9：复用画笔（标注文字；使用点改 color/textSize/粗细/下划线）——G68 惰性初始化保持 JVM 可测 */
+    private val labelPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    }
+
+    /** #9：复用画笔（框/椭圆/多边形，填充或描边；使用点改 color/alpha/style） */
+    private val shapePaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f }
+    }
+
+    /** #9：复用画笔（线段；STROKE） */
+    private val lineStrokePaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f }
+    }
+
+    /** P2：复用 Path（Misc 线/多边形每帧 new Path 轻 GC；单画布串行绘制，字段复用无冲突；by lazy 保持 JVM 可测） */
+    private val reusablePath by lazy { Path() }
+
     fun draw(canvas: Canvas, annotations: List<MiscAnnotation>, camera: Camera, canvasW: Int, canvasH: Int) {
         for (a in annotations) {
             when (a) {
@@ -42,12 +60,12 @@ object MiscAnnotationRenderer {
 
     private fun drawLabel(canvas: Canvas, a: MiscAnnotation.Label, camera: Camera, w: Int, h: Int) {
         val (sx, sy) = camera.worldToScreen(a.x, a.y, w, h)
-        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // #9：复用池画笔，按标注属性覆盖
+        val p = labelPaint.apply {
             color = colorOf(a.colorName)
             textSize = (a.fontSize * 0.8f).toFloat().coerceIn(8f, 40f)
             isFakeBoldText = a.isBold
             isUnderlineText = a.isItalic
-            textAlign = Paint.Align.CENTER
         }
         // R-P2：Rotation 支持（桌面版 MiscLabel 含 Rotation 字段，绕锚点旋转）
         if (a.rotation != 0.0) {
@@ -64,11 +82,11 @@ object MiscAnnotationRenderer {
         val (sx, sy) = camera.worldToScreen(a.x, a.y, w, h)
         val bw = (a.width * camera.zoom).toFloat()
         val bh = (a.height * camera.zoom).toFloat()
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // #9：复用池画笔，按标注属性覆盖
+        val paint = shapePaint.apply {
             color = colorOf(a.colorName)
             alpha = alpha(a.transparency)
             style = if (a.isFilled) Paint.Style.FILL else Paint.Style.STROKE
-            strokeWidth = 2f
         }
         // R-P2：Rotation 支持（桌面版 MiscBox 含 Rotation）
         if (a.rotation != 0.0) {
@@ -85,11 +103,11 @@ object MiscAnnotationRenderer {
         val (sx, sy) = camera.worldToScreen(a.x, a.y, w, h)
         val bw = (a.width * camera.zoom).toFloat()
         val bh = (a.height * camera.zoom).toFloat()
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // #9：复用池画笔，按标注属性覆盖
+        val paint = shapePaint.apply {
             color = colorOf(a.colorName)
             alpha = alpha(a.transparency)
             style = if (a.isFilled) Paint.Style.FILL else Paint.Style.STROKE
-            strokeWidth = 2f
         }
         // R-P2：Rotation 支持（桌面版 MiscOval 含 Rotation）
         if (a.rotation != 0.0) {
@@ -104,13 +122,13 @@ object MiscAnnotationRenderer {
 
     private fun drawLine(canvas: Canvas, a: MiscAnnotation.Line, camera: Camera, w: Int, h: Int) {
         if (a.path.size < 2) return
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = colorOf(a.colorName)
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
+        // #9：复用池画笔，按标注颜色覆盖
+        val paint = lineStrokePaint.apply { color = colorOf(a.colorName) }
         val (sx0, sy0) = camera.worldToScreen(a.path[0].first, a.path[0].second, w, h)
-        val path = Path().apply { moveTo(sx0, sy0) }
+        // P2：复用 Path（单画布串行，先 reset 再构建）
+        val path = reusablePath
+        path.reset()
+        path.moveTo(sx0, sy0)
         for ((i, pt) in a.path.withIndex()) {
             if (i == 0) continue
             val (sx, sy) = camera.worldToScreen(pt.first, pt.second, w, h)
@@ -121,14 +139,17 @@ object MiscAnnotationRenderer {
 
     private fun drawPolygon(canvas: Canvas, a: MiscAnnotation.Polygon, camera: Camera, w: Int, h: Int) {
         if (a.path.size < 3) return
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // #9：复用池画笔，按标注属性覆盖
+        val paint = shapePaint.apply {
             color = colorOf(a.colorName)
             alpha = alpha(a.transparency)
             style = if (a.isFilled) Paint.Style.FILL else Paint.Style.STROKE
-            strokeWidth = 2f
         }
         val (sx0, sy0) = camera.worldToScreen(a.path[0].first, a.path[0].second, w, h)
-        val path = Path().apply { moveTo(sx0, sy0) }
+        // P2：复用 Path（单画布串行，先 reset 再构建）
+        val path = reusablePath
+        path.reset()
+        path.moveTo(sx0, sy0)
         for ((i, pt) in a.path.withIndex()) {
             if (i == 0) continue
             val (sx, sy) = camera.worldToScreen(pt.first, pt.second, w, h)

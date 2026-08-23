@@ -38,7 +38,8 @@ data class Unit(
     @SerializedName("PositionTimeDeleted") var positionTimeDeleted: String = "2020-01-01 00:00:00",
     @SerializedName("Speed") var speed: Int = 0,                    // 航速 ×1000
     @SerializedName("Course") var course: Int = 0,                   // 航向 ×1000
-    @SerializedName("Range") var range: Int = -100000,             // 可移动距离（海里），-100000=无限制
+    @SerializedName("Range") var range: Int = -100000,             // 可移动距离（海里），-100000=无限制；R4：保留 Int 存档键，运行时用 rangeMm 毫米余额
+    @SerializedName("RangeMm") var rangeMm: Long? = null,           // R4 毫米海里余额（1000=1海里；可空=旧存档/桌面互通回退用 Range 整数；持久化时与 Range 双写）
     @SerializedName("WpDistance") var wpDistance: Int = 0,          // 航路点距离（scn_tool 特有键，用户原始存档含此键，需保留）
     @SerializedName(value = "PastWaypointArray", alternate = ["PastWaypointArray1"]) var pastWaypointArray: MutableList<Waypoint> = mutableListOf(),   // 历史轨迹点（兼容用户场景 PastWaypointArray1）
     @SerializedName(value = "FutureWaypointArray", alternate = ["FutureWaypointArray1"]) var futureWaypointArray: MutableList<Waypoint> = mutableListOf(),  // 未来航路点（兼容 FutureWaypointArray1）
@@ -59,16 +60,36 @@ data class Unit(
     /** 瞬态标记：本回合新加入的单位不移动（不落盘，Gson 忽略） */
     @Transient var isNewThisTurn: Boolean = false,
 
-    /** 瞬态：最大航速（节），由舰船信息表填写；用于 A 级快慢判定与 75% 加速档（不落盘） */
-    @Transient var maxSpeedKnots: Double? = null,
-
-    /** 瞬态：Range 耗尽后选择"继续移动"（桌面版 Continue Movement = 无视 Range 继续航行，不落盘） */
+    /** 瞬态：Range 耗尽后选择"继续移动"（桌面版 Continue Movement = 无视 Range 继续航行，不落盘）；E3：maxSpeedKnots 已移除（D9 能力表死代码，勿恢复） */
     @Transient var ignoreRange: Boolean = false,
 
     /** 瞬态：编队 prepare 时的未来航路点备份（E12：cancel 恢复用，不落盘） */
-    @Transient var formationWaypointBackup: MutableList<Waypoint>? = null
+    @Transient var formationWaypointBackup: MutableList<Waypoint>? = null,
+
+    /** 瞬态：编队 prepare 时的移动前位置（#22：cancel 恢复用，不落盘；
+     *  改用瞬态字段替代向 PastWaypointArray 加轨迹点，避免 DO_BEFORE 状态被状态机误判） */
+    @Transient var formationPrepPosition: Pair<Long, Long>? = null,
+
+    /** 瞬态：本回合是否消费了最后一个未来航路点（#6 G40：引擎精确标记，触发 NoFutureWaypoints 弹窗；不落盘） */
+    @Transient var reachedFinalWaypoint: Boolean = false,
+    /** R4 运行时毫米余额镜像（与 rangeMm 持久化键同步；-1=未初始化）；存盘用 rangeMm，运行时用此镜像避免每回合读可空装箱 */
+    @Transient var rangeNmMm: Long = -1L
 ) {
     // ---- 便捷换算（节/度；高度/深度为 ×1000 定点，转米显示） ----
+    /** R4：真实剩余 Range（海里，毫米精度；unlimited=-100000 保持语义）；运行时用 rangeNmMm/rangeMm 余额 */
+    fun effectiveRangeNm(): Double = if (range == -100000) -1.0 else if (rangeNmMm >= 0) rangeNmMm / 1000.0 else if (rangeMm != null) rangeMm!! / 1000.0 else range.toDouble()
+    fun isRangeUnlimited(): Boolean = range == -100000
+    /** R4：同步写回 Int 存档键与 RangeMm 持久化键（向下取整海里存 Range，毫米余数留在 rangeMm/rangeNmMm） */
+    fun syncRangeIntFromMm() {
+        if (range == -100000) { rangeMm = null; return }
+        if (rangeNmMm >= 0) { range = (rangeNmMm / 1000).toInt(); rangeMm = rangeNmMm }
+        else if (rangeMm != null) range = (rangeMm!! / 1000).toInt()
+    }
+    /** R4：从持久化键初始化运行时余额（旧存档无 RangeMm 时按 Range 整海里回退） */
+    fun initRangeMmFromPersisted() {
+        if (range == -100000) { rangeNmMm = -1L; return }
+        rangeNmMm = rangeMm ?: range.toLong() * 1000L
+    }
     fun speedKnots(): Double = speed / 1000.0
     fun courseDeg(): Double = course / 1000.0
 
@@ -94,6 +115,44 @@ data class Unit(
     fun isSubmarine(): Boolean = depth != null
     fun isAircraft(): Boolean = altitude != null
     fun isSurface(): Boolean = !isSubmarine() && !isAircraft()
+
+    /**
+     * 是否为未删除哨兵（2020-01-01 00:00:00 / 2999-* 远期 / 空串），与 ReplayEngine 哨兵一致。
+     * 哨兵视为"未删除"，其余真实删除时间视为已删边界。
+     */
+    fun isNotDeletedSentinel(v: String): Boolean {
+        if (v.isBlank()) return true
+        return try {
+            val d = com.simplot.android.data.util.TimeUtil.parse(v)
+            d == java.time.LocalDateTime.of(2020, 1, 1, 0, 0, 0) || !d.isBefore(java.time.LocalDateTime.of(2999, 1, 1, 0, 0, 0))
+        } catch (e: Exception) { false }
+    }
+
+    /** 当前时刻是否存活（Created <= now < Deleted，非哨兵同刻生死视为已删不画） */
+    fun isAliveAt(nowStr: String): Boolean {
+        return try {
+            val now = com.simplot.android.data.util.TimeUtil.parse(nowStr)
+            if (positionTimeCreated.isNotBlank()) {
+                val c = com.simplot.android.data.util.TimeUtil.parse(positionTimeCreated)
+                if (now.isBefore(c)) return false
+            }
+            if (positionTimeDeleted.isNotBlank() && !isNotDeletedSentinel(positionTimeDeleted)) {
+                val d = com.simplot.android.data.util.TimeUtil.parse(positionTimeDeleted)
+                if (!now.isBefore(d)) return false
+            }
+            true
+        } catch (e: Exception) { true }
+    }
+
+    /** 同刻生死（Created==Deleted 非哨兵）即已删 — PC 不显示的 5 个白/蓝点根因 */
+    fun isSameTickDeleted(): Boolean {
+        if (positionTimeCreated.isBlank() || positionTimeDeleted.isBlank()) return false
+        if (isNotDeletedSentinel(positionTimeDeleted)) return false
+        return try {
+            com.simplot.android.data.util.TimeUtil.parse(positionTimeCreated) ==
+                com.simplot.android.data.util.TimeUtil.parse(positionTimeDeleted)
+        } catch (e: Exception) { false }
+    }
 }
 
 /**

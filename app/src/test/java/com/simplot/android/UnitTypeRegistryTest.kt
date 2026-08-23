@@ -3,6 +3,8 @@ package com.simplot.android
 import com.simplot.android.data.model.Unit
 import com.simplot.android.domain.registry.UnitTypeRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -60,5 +62,37 @@ class UnitTypeRegistryTest {
         assertTrue(UnitTypeRegistry.AIR_TYPES.contains("AC Fighter"))
         assertTrue(UnitTypeRegistry.AIR_TYPES.contains("Helo ASW"))
         assertTrue(UnitTypeRegistry.AIR_TYPES.contains("Missile AAM"))
+    }
+
+    // ============ P1-2（G13 反向切换）回归 ============
+
+    @Test
+    fun `apply domain surface clears altitude and depth`() {
+        // P1-2 修复回归：飞机/潜艇改回水面时，高度与深度必须被清空（此前无法置 null → 永久卡在飞机/潜艇）。
+        val u = Unit(idNum = "A001", unitType = "AC Fighter", altitude = 3000, depth = null)
+        UnitTypeRegistry.applyDomainDimensions(u, UnitTypeRegistry.Domain.SURFACE)
+        assertNull("改回水面后高度应清空", u.altitude)
+        assertNull("改回水面后深度应清空", u.depth)
+        assertFalse("改回水面后不再是飞机", u.isAircraft())
+        assertTrue("改回水面后是水面单位", u.isSurface())
+    }
+
+    @Test
+    fun `apply domain air clears depth keeps altitude`() {
+        // 切到飞机：保留高度、清空深度。
+        val u = Unit(idNum = "S001", unitType = "Destroyer", altitude = null, depth = 500)
+        UnitTypeRegistry.applyDomainDimensions(u, UnitTypeRegistry.Domain.AIR)
+        assertNull("切到飞机后深度应清空", u.depth)
+        assertNull("水面单位切飞机时高度暂空（由调用方写回）", u.altitude)
+    }
+
+    @Test
+    fun `apply domain subsurface clears altitude keeps depth`() {
+        // 切到潜艇：清空高度、保留深度。
+        val u = Unit(idNum = "A001", unitType = "AC Fighter", altitude = 3000, depth = 500)
+        UnitTypeRegistry.applyDomainDimensions(u, UnitTypeRegistry.Domain.SUBSURFACE)
+        assertNull("切到潜艇后高度应清空", u.altitude)
+        assertEquals("切到潜艇后深度保留", 500, u.depth!!.toLong())
+        assertTrue("是潜艇判定", u.isSubmarine())
     }
 }

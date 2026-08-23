@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -43,10 +44,12 @@ fun ConvoyDialog(
     // G03：桌面 WindowConvoy TextCourse/TextSpeed/TextNumCols/TextNumRows/TextSpaceCols/TextSpaceRows
     var courseText by remember { mutableStateOf("0") }
     var speedText by remember { mutableStateOf("10") }
-    var colsText by remember { mutableStateOf("3") }
-    var rowsText by remember { mutableStateOf("2") }
-    var spaceColsText by remember { mutableStateOf("500") }
-    var spaceRowsText by remember { mutableStateOf("500") }
+    // #14 修复：默认列/行/间距置 0 → 默认走环绕布局（与旧版"Merchant 环绕 2000 码"行为一致）；
+    // v0.6.0 默认 "3×2" 会意外产出网格布局，改变默认行为。
+    var colsText by remember { mutableStateOf("0") }
+    var rowsText by remember { mutableStateOf("0") }
+    var spaceColsText by remember { mutableStateOf("0") }
+    var spaceRowsText by remember { mutableStateOf("0") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -55,7 +58,7 @@ fun ConvoyDialog(
             // 字段多，内容超屏可滚动（与 UnitEditSheet 同模式）
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.verticalScroll(rememberScrollState())
+                modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
             ) {
                 OutlinedTextField(value = commodoreName, onValueChange = { commodoreName = it },
                     label = { Text("指挥舰名") }, singleLine = true, modifier = Modifier.fillMaxWidth())

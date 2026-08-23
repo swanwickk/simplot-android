@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -84,7 +85,8 @@ fun FormationDialog(
 
     var newName by remember { mutableStateOf("") }
     var newType by remember { mutableStateOf(FormationEngine.FormationTypes.COLUMN) }
-    var newUnit by remember { mutableStateOf(FormationEngine.FormationDistanceUnits.NMI) }
+    // #16 修复：变量名 newUnit 具误导性（实际存"距离单位"），改名 newDistanceUnit
+    var newDistanceUnit by remember { mutableStateOf(FormationEngine.FormationDistanceUnits.NMI) }
     var selectedName by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
     var renameText by remember { mutableStateOf("") }
@@ -95,10 +97,10 @@ fun FormationDialog(
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.verticalScroll(rememberScrollState())
+                modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
             ) {
                 // ---- 1. 新建编队（桌面版 CreateFormation：名 + 类型三选 + 距离单位） ----
-                Text("新建编队", style = MaterialTheme.typography.titleSmall)
+                Text("① 新建编队", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 OutlinedTextField(
                     value = newName, onValueChange = { newName = it },
                     label = { Text("队形名") }, singleLine = true, modifier = Modifier.fillMaxWidth()
@@ -109,21 +111,22 @@ fun FormationDialog(
                     TypeOption("航向", newType == FormationEngine.FormationTypes.COURSE) { newType = FormationEngine.FormationTypes.COURSE }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    UnitOption("海里", newUnit == FormationEngine.FormationDistanceUnits.NMI) { newUnit = FormationEngine.FormationDistanceUnits.NMI }
-                    UnitOption("码", newUnit == FormationEngine.FormationDistanceUnits.YARDS) { newUnit = FormationEngine.FormationDistanceUnits.YARDS }
-                    UnitOption("米", newUnit == FormationEngine.FormationDistanceUnits.METERS) { newUnit = FormationEngine.FormationDistanceUnits.METERS }
+                    UnitOption("海里", newDistanceUnit == FormationEngine.FormationDistanceUnits.NMI) { newDistanceUnit = FormationEngine.FormationDistanceUnits.NMI }
+                    UnitOption("码", newDistanceUnit == FormationEngine.FormationDistanceUnits.YARDS) { newDistanceUnit = FormationEngine.FormationDistanceUnits.YARDS }
+                    UnitOption("米", newDistanceUnit == FormationEngine.FormationDistanceUnits.METERS) { newDistanceUnit = FormationEngine.FormationDistanceUnits.METERS }
                 }
                 Button(
                     onClick = {
-                        onCreate(newName.trim(), newType, newUnit)
+                        onCreate(newName.trim(), newType, newDistanceUnit)
                         if (newName.isNotBlank()) { selectedName = newName.trim(); newName = "" }
                     },
                     enabled = newName.isNotBlank(),
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("创建编队") }
+                androidx.compose.material3.HorizontalDivider()
 
                 // ---- 2. 编队列表：选择 / 重命名 / 删除 ----
-                Text("编队列表", style = MaterialTheme.typography.titleSmall)
+                Text("② 编队列表", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 if (allNames.isEmpty()) {
                     Text("场景中无编队（可用上方「创建编队」新建）", style = MaterialTheme.typography.bodyMedium)
                 }
@@ -153,6 +156,7 @@ fun FormationDialog(
                         }
                     }
                 }
+                androidx.compose.material3.HorizontalDivider()
 
                 // ---- 3. 选中编队详情：类型/距离单位/成员/设中心/预览/准备/撤销 ----
                 val sel = selectedName
@@ -165,7 +169,7 @@ fun FormationDialog(
                     // 可加入的单位：场景中存在且未加入任何编队
                     val available = units.filter { it.formationName.isNullOrBlank() }
 
-                    Text("编队：$sel", style = MaterialTheme.typography.titleSmall)
+                    Text("编队：$sel", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         TypeOption("纵队", selType == FormationEngine.FormationTypes.COLUMN) { onSetType(sel, FormationEngine.FormationTypes.COLUMN) }
                         TypeOption("罗盘", selType == FormationEngine.FormationTypes.COMPASS) { onSetType(sel, FormationEngine.FormationTypes.COMPASS) }

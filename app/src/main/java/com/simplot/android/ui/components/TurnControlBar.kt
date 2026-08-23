@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -25,9 +28,10 @@ import com.simplot.android.data.model.TurnInterval
 import com.simplot.android.engine.TurnState
 
 /**
- * 回合控制栏：Do / Undo / Next + 回合时间显示 + 回合时长自定义（XX分XX秒）
+ * 回合控制栏：按"时钟信息 / 回合时长 / 回合操作"三段式卡片分组（P1-1）。
  *
- * 需求三：回合时长可自由填写 XX分XX秒，默认 3:00
+ * 原先"双时钟+时长输入+Do/Undo/Next"挤在一卡，长时盯屏扫描成本高。
+ * 现拆为三段卡片，海图之上居家可长时间推演。
  */
 @Composable
 fun TurnControlBar(
@@ -37,46 +41,61 @@ fun TurnControlBar(
     onNext: () -> Unit,
     modifier: Modifier = Modifier,
     tick: Int = 0,
+    vmTurnState: TurnState.State? = null,
     onIntervalSet: ((minutes: Int, seconds: Int) -> Unit)? = null
 ) {
-    // 回合时长编辑状态（分钟/秒）
-    // G69（R-P3.9）：remember 补 file key——切场景后输入框重置为新场景的回合时长，
-    // 避免保留上一场景的旧值（回合推进为同 file 原地变更，不影响编辑态保持）。
     var minutesText by remember(file) { mutableStateOf(file.time.currentTurnInterval.minutes.toString()) }
     var secondsText by remember(file) { mutableStateOf(file.time.currentTurnInterval.seconds.toString()) }
 
     @Suppress("UNUSED_EXPRESSION") tick
-    val state = TurnState.detect(file)
+    val state = vmTurnState ?: TurnState.detect(file)
     val interval = file.time.currentTurnInterval
 
-    Surface(tonalElevation = 3.dp) {
-        Column(
-            modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+    Column(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // 段一：时钟信息（居家可一瞥获知推进进度）
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            // 时间信息行
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("回合时间：${file.time.currentTurnTime}", style = MaterialTheme.typography.bodySmall)
-                    Text("位置时间：${file.time.currentPositionTime}", style = MaterialTheme.typography.bodySmall)
+                    Text("回合时间", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(file.time.currentTurnTime, style = MaterialTheme.typography.bodyMedium)
+                    Text("位置时间", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(file.time.currentPositionTime, style = MaterialTheme.typography.bodyMedium)
                 }
-                Text(
-                    "${TurnState.label(state)} · 时长 ${interval.display()}",
-                    style = MaterialTheme.typography.labelMedium
-                )
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        "${TurnState.label(state)} · ${interval.display()}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
             }
+        }
 
-            // 回合时长自定义（需求三：XX分XX秒）
+        // 段二：回合时长输入（独立卡片，设置时长为次要操作）
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("回合时长", style = MaterialTheme.typography.bodySmall)
+                Text("回合时长", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.6f))
                 OutlinedTextField(
                     value = minutesText, onValueChange = { minutesText = it.filter { c -> c.isDigit() }.take(3) },
                     label = { Text("分") },
@@ -99,18 +118,16 @@ fun TurnControlBar(
                     minutesText = m.toString()
                     secondsText = s.toString()
                     onIntervalSet?.invoke(m, s)
-                }) { Text("设置时长") }
-            }
-
-            // Do / Undo / Next 按钮行
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(onClick = onDo, enabled = TurnState.canDo(state), modifier = Modifier.weight(1f)) { Text("Do 移动") }
-                Button(onClick = onUndo, enabled = TurnState.canUndo(state), modifier = Modifier.weight(1f)) { Text("Undo") }
-                Button(onClick = onNext, enabled = TurnState.canNext(state), modifier = Modifier.weight(1f)) { Text("Next 确认") }
+                }) { Text("设置") }
             }
         }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+        Text(
+            "回合操作可在底部主操作栏快速触发（拇指可达）",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

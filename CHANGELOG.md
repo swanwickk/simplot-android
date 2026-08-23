@@ -5,30 +5,74 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [0.7.0] - 2026-08-13
+## [0.7.2] - 2026-08-21
 
-### P3 场景库管理 + 测试与交付完备化
+### 修复：0.7.1 全面审阅缺陷批次（对照《0.7.1 代码审阅与修改意见书》P1/P2/P3 逐项）
 
-**新增：场景库管理（桌面版 WindowLoadScenarios 的安卓对应物）**
-- 顶部工具栏「场景库」入口：SAF 目录选择（`OpenDocumentTree` + `takePersistableUriPermission`），目录记忆持久化到 SharedPreferences，跨启动恢复
-- 应用内场景列表：遍历目录内 `.json` / `.SpScn` 文件（过滤目录与其他文件、大小写不敏感排序），轻点行打开场景（`buildDocumentUriUsingTree`）
-- 行内「删除」→ 二次确认 AlertDialog → `DocumentsContract.deleteDocument`；失败/成功均有 Toast 反馈
-- 列表高度随屏幕高度自适应（横竖屏不溢出）
+**P1 逻辑缺陷**
+- **G40 最终航路点双轨判定矛盾（P1-1）**：`AdvanceTurnUseCase.execute` 此前仍用过宽条件（`futureWaypointArray 空 && pastWaypointArray 非空`）判定 `finalWaypointReached`，导致从未设航线的单位每回合误弹「到达最终航路点」对话框；`hasReachedFinalWaypoint` 同源。现统一消费 `MovementEngine` 的精确标记 `reachedFinalWaypoint`（仅本回合消费最后一个未来航路点的单位触发），新增双用例回归。
+- **单位类型反向切换死锁（P1-2/G13）**：此前 `showAltField` 以 `unit.isAircraft()`（altitude 非 null）判定恒 true、且高度输入清空时 `alt.isNotBlank()` 为 false 不写回 → 飞机/潜艇永远无法改回水面单位。新增纯函数 `UnitTypeRegistry.applyDomainDimensions` 按目标大类重置高度/深度维度（AIR 清深度、SUBSURFACE 清高度、其余全清），`UnitEditSheet` 提交逻辑改按 `editDomain` 分支处理，新增 3 用例回归。
 
-**测试基础设施（无模拟器环境可在 JVM 运行 UI 测试）**
-- 引入 Robolectric 4.14 + Compose ui-test-junit4：新增 `SceneLibraryDialogUiTest`（6 个 Compose UI 用例：空态×2/列表排序/点击打开/删除取消/删除失败）+ `SceneLibraryDataTest`（9 个 SAF 交互函数用例：querySceneFiles 过滤排序/空表/缺列名容错/异常上抛/queryTreeDisplayName×3/deleteSceneDocument 成败路径）
-- 测试宿主 `ComponentActivity` 声明在 `app/src/main/AndroidManifest.xml`（非 exported）；`testOptions.unitTests.isIncludeAndroidResources = true`。说明：AGP 不消费 `src/test/AndroidManifest.xml`（无 unit-test manifest 合并任务），且 `ui-test-manifest` 是 debugImplementation AAR 会让 release 变体缺声明，故声明在主 manifest，两变体通用
+**P2 数据完整性**
+- **历史轨迹点丢失航向/航速（P2-1）**：`MovementEngine.makeWaypoint` 补齐 `Name/Speed/Course/AssignedAltDepth/递增 Number`（此前只写 x/y，桌面版读取航迹时方向航速恒 0 失真），新增 2 用例回归。
 
-**构建与发布**
-- `app/build.gradle.kts`：新增可选 release 签名（读 `keystore.properties`，缺失时退化为未签名 release APK）
-- GitHub Actions CI 增加 `assembleRelease`（unsigned）产物上传
-- 全量单测基线：**53 类 / 330 用例全绿**（0 failure / 0 error / 0 skip；debug + release 两变体均跑）
-- 交付：debug + release APK、本仓库可一键 `./gradlew test` / `assembleDebug` / `assembleRelease`
+**P3 质量/性能**
+- **ArcRenderer 画笔/Path/RectF 复用（P3-1/G68 补齐）**：此前每弧 new Paint/Path/RectF 造成大场景 GC 抖动，改 `by lazy` 字段复用。
+- **海图标签忽略独立呼叫号（P3-2）**：`SceneCanvas.drawUnitLabel` 改走 `callsignOrName()`（此前直接用 `u.name`，UnitEditSheet 配置的独立 callsign 不显示）。
+- **比例尺文字 locale（P3-3/#15 覆盖不全）**：`ScaleBar.label` 补显式 `Locale.US`，新增跨 locale 回归用例。
+- **地图多边形 Path 复用（P3-4）**：`MapRenderer.screenPath` 每多边形 new Path 改字段复用。
 
 ### 验证
-- `./gradlew test` → BUILD SUCCESSFUL（含新增 Robolectric UI 测试）
-- `./gradlew assembleDebug` / `assembleRelease` → 产物正常（release 已用本地 keystore 签名，apksigner 校验通过）
-- 未变：存档字节级互通、引擎逻辑（0.6.0 基线 311 用例全量回归通过）
+- 329 JUnit 用例 / 50 测试类全绿（0 失败 0 错误，较 0.7.1 新增 6 用例）
+- assembleDebug 成功
+
+## [0.7.1] - 2026-08-18
+
+### 修复：读取新文件时视野不重置、旧地图与交互状态残留等缓存不刷新问题
+
+- **视野相机跟随新文件自适应**：`SceneCanvas.kt` 记录 `canvasSize`，使用 `LaunchedEffect(file, canvasSize)` 监听场景切换与尺寸就绪，自动重置相机视野到新场景单位坐标（`camera.fitBounds`），场景无单位时自动回退到地图边界或默认原点，彻底解决连续打开不同场景时画面空白或停留在上一场景坐标的问题。
+- **旧场景地图与比例尺彻底清空**：`GameViewModel.kt` 的 `applyLoaded` 与 `createNewScenario`（无地图时）在载入前强制调用 `mapRenderer.clearMap()`，彻底清空上一场景的解析数据、背景位图、地图边界和比例尺，避免新场景无地图时上一场景底图和边界残留。
+- **多场景切换临时交互状态彻底重置**：`applyLoaded` 补充清理 `selectedUnitId`、`editUnit`、`editArcUnit`、`editWaypointsUnit`、`clipboardUnit`、`rangeExhaustedUnit`、`finalWaypointUnit`、`finalWaypointQueue`、`replayTimeline`、`replayPlaying`、`replayIndex`、`measureMode`、`clearMeasures()`、全部子弹窗开关（`showNewUnit`、`showConvoy`、`showFormation`、`showNewScenario`、`showExportOrders`）等，杜绝跨文件状态残留。
+- **新增回归测试**：`ScenarioSwitchStateTest.kt` 全面覆盖 `MapRenderer.clearMap()` 重置、场景切换视野重算、地图边界回退与多场景数据隔离。
+
+### [0.6.1] - 2026-08-15
+
+### 修复：0.6.0 审查缺陷批次（对照《0.6.0 代码审查报告》#1-#26 逐项）
+
+**P1 语义对齐**
+- **G23 弧排序按桌面语义修复（#1）**：删除绘制期 startAngle 排序（与桌面「列表顺序即绘制顺序」偏离），ArcEditorDialog 新增 ↑/↓ 上移/下移重排（`moveItem` 纯函数可单测）
+
+**P2 缺陷修复**
+- **#2 编队设中心**：旧中心降级后回置 `isInFormation=true`，不再成为脱离编队的孤岛；修正被固化的错误断言
+- **#3 编队规格跨场景泄漏**：`applyLoaded` 清空 formationSpecs（与 createNewScenario 一致），消除加载新场景后的「幻影编队」
+- **#4 护航队落 (0,0) 视野外**：GameViewModel 注入视野中心（camera.centerWorldX/Y）作指挥舰原点；ConvoyEngine 新增 centerX/centerY 参数，新增绝对位置用例
+- **#5 G13 类型切换不生效**：切到航空/水下大类时默认初始化高度/深度输入为 "0"，保证 `isAircraft()/isSubmarine()` 判定生效
+- **#6 G40 最终航路点误报**：引擎精确标记（仅「本回合消费最后一个未来航路点」的单位）替代过宽条件；弹窗加「全部继续」批量跳过；新增精确标记回归用例
+- **#7 G65 残废公式**：删除 MapRenderer.parseMapConfigJson 的恒 0.1852 死赋值（`boundaryWidth/自身` 恒 1）
+
+**P3 清理**
+- **#8 G66 死代码**：清除 D9 移除的 turnMotion/SizeLevels/boost 残留，同步清理依赖这些符号的过时回归测试
+- **#9/#25 每帧分配**：SceneCanvas 新增 ScenePaintPool（by lazy 惰性初始化），`paletteOf` 每帧只算一次；BearingRenderer/TrackRenderer/MiscAnnotationRenderer/UnitRenderer 画笔与 Path 全部复用（G68 同策略）；回放帧 `u.copy` 为浅拷贝、语义必需，保留并注释
+- **#10 PlayerSettingsCodec 双份键序**：toDesktopJson 改由单一 `DISPLAY_KEYS` 表生成，消灭死代码 `DISPLAY_KEY_ORDER`
+- **#11 无用参数**：删除 SceneCanvas.onLongPress（G32 已改为长按拖拽 Relocate）
+- **#12 错误日志分流**：toast 不再混入 errorLog，仅错误/警告路径 logError
+- **#13 场景设置不静默覆盖全局**：`settingsLoadedFromFile` 标记，文件来源设置只更新内存 + 回写场景目录
+- **#14 护航队默认布局**：ConvoyDialog 默认列/行/间距置 0 → 默认环绕布局（与旧版行为一致）
+- **#15 Locale**：CSV/画布 String.format 统一显式 `Locale.US`（防其他 locale 十进制分隔符差异）
+- **#16 误导变量名**：FormationDialog `newUnit` → `newDistanceUnit`（实际存距离单位）
+- **#17 remember key**：ManualMoveSheet 补 `unit.idNum` key（防弹层复用旧快照）
+- **#18 remember key**：SettingsDialog 编辑态补 `settings` key（随外部更新刷新）
+- **#19 队形名颜色**：走玩家自定义 palette（此前 `colorOf(side)` 硬编码默认调色板）
+- **#20 自动存档时间源**：saveAuto 改取 `currentPositionTime`——桌面「先推时间再 SaveAuto」，取 TurnTime 会滞后一回合
+- **#21 手动移动轨迹时间戳**：DoMove 逐步推进 moveTime，轨迹点时间戳不再全部相同
+- **#22 编队准备不污染状态机**：prepare 用瞬态字段 `formationPrepPosition` 替代向 PastWaypointArray 加轨迹点，DO_BEFORE 不误判「回合已确认」
+- **#23 单位导入撞号提示**：导入后检测 TrackNumber 冲突并提示
+- **#24 G47 mono 变体**：文档化（Mono 等价填充，不生成位图资产）
+- **#26 新场景地图缺失提示**：autoLoadMap 未找到同名地图时提示放入场景目录
+
+### 验证
+- 309 JUnit 用例 / 50 测试类全绿（0 失败 0 错误）
+- assembleDebug 成功
 
 ## [0.6.0] - 2026-08-12
 

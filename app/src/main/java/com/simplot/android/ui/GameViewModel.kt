@@ -225,6 +225,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var showNewUnit by mutableStateOf(false)
     /** 护航队创建弹窗开关（P2 恢复：桌面版 WindowConvoy） */
     var showConvoy by mutableStateOf(false)
+    /** G15：手动移动弹层目标（不遮挡原则：入口在顶部 EditMenu，弹层为 Sheet 不叠盖地图中心） */
+    var manualMoveUnit by mutableStateOf<SimUnit?>(null)
 
     /** 玩家显示设置（R4：桌面版 PlayerSettings，本地持久化） */
     var settings by mutableStateOf(settingsRepo.load())
@@ -264,6 +266,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 显式版本号：任何场景变更后自增，驱动 Compose 重组（替代 turnTick） */
     var revision by mutableStateOf(0)
+    // FIX-STATE：回合状态改为显式可观察源（Do/Undo/Next 成功后写入），UI 直接绑定，
+    // 消除 detect(file) 推断 + Compose skippable 导致的按钮不刷新问题。
+    var turnState by mutableStateOf(com.simplot.android.engine.TurnState.State.DO_BEFORE)
         private set
 
     var rangeExhaustedUnit by mutableStateOf<SimUnit?>(null)
@@ -272,6 +277,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     /** G30：Show Side 视图过滤（All/Blue/Red，仅影响视图，不落盘） */
     var showSide by mutableStateOf(ShowSide.ALL)
         private set
+
+    /** 当前选中的距离单位（nm / yd / m 循环切换） */
+    var distanceUnit by mutableStateOf(com.simplot.android.data.util.CoordUtil.DistanceUnit.NM)
+        private set
+
+    fun cycleDistanceUnit() {
+        distanceUnit = distanceUnit.next()
+        toast("距离单位：${distanceUnit.label}（${distanceUnit.code}）")
+    }
 
     /** G40：到达最终航路点三选弹窗当前单位（桌面 NoFutureWaypoints） */
     var finalWaypointUnit by mutableStateOf<SimUnit?>(null)
@@ -283,6 +297,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     /** G40：一次 Do 多艘船到达最终航路点时的待弹队列（逐个弹出） */
     private val finalWaypointQueue = mutableListOf<String>()
+    // FIX6：Range 耗尽也走队列（此前只取 firstOrNull，多船同时耗尽时其余被静默吞掉）
+    private val rangeExhaustedQueue = mutableListOf<String>()
 
     // ---- 回放状态 ----
     var replayTimeline by mutableStateOf<List<ReplayEngine.Frame>>(emptyList())
@@ -299,16 +315,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val toasts: StateFlow<String?> = _toasts.asStateFlow()
 
     // ---- G11：错误日志（桌面 WindowErrorLog Listbox1 + UpdateErrorLog）----
-    // 内存滚动日志：toast 通道顺带记录（带时间戳，最新在前），设置弹窗内可查看/清空。
+    // 内存滚动日志（带时间戳，最新在前），设置弹窗内可查看/清空。
+    // #12 修复：仅错误/警告写入（toast 只负责一次性提示，不再把成功/信息消息混入"错误日志"）。
     val errorLog = mutableStateListOf<String>()
 
     fun toast(msg: String) {
         _toasts.value = msg
-        // G11：顺带写入内存错误日志（toast 含错误与关键操作反馈，供排查场景加载/文件错误）
-        appendErrorLogEntry(errorLog, msg, formatLogTime())
+        // #12：toast 与 logError 分流——成功/信息消息不再写入 errorLog（原实现混入全部 toast）
     }
 
-    /** G11：显式记录错误日志（不经 toast，静默记录） */
+    /** G11：显式记录错误日志（不经 toast，静默记录；错误/警告路径调用） */
     fun logError(msg: String) = appendErrorLogEntry(errorLog, msg, formatLogTime())
 
     /** G11：清空错误日志（桌面 WindowErrorLog 清空语义） */
@@ -323,17 +339,23 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============ 玩家设置（R4） ============
 
+    /** #13 修复：当前内存设置是否来自场景目录 player_settings.json（G55 场景级设置不应静默覆盖本地全局默认） */
+    private var settingsLoadedFromFile = false
+
     /** 更新并持久化玩家设置 */
     fun updateSettings(transform: (com.simplot.android.domain.model.PlayerSettings) -> com.simplot.android.domain.model.PlayerSettings) {
         val next = transform(settings)
         settings = next
-        settingsRepo.save(next)
+        // #13：文件来源的设置只更新内存（渲染即时生效），不写本地全局 SharedPreferences；
+        // 场景级设置由保存流程（saveThreeFilesTo/autoSave/saveSetup）回写场景目录 player_settings.json
+        if (!settingsLoadedFromFile) settingsRepo.save(next)
     }
 
     /** 直接应用玩家设置（对话框保存） */
     fun applySettings(new: com.simplot.android.domain.model.PlayerSettings) {
         settings = new
-        settingsRepo.save(new)
+        // #13：同 updateSettings——文件来源不静默覆盖本地全局默认
+        if (!settingsLoadedFromFile) settingsRepo.save(new)
     }
 
     /** 开关切换便捷方法 */
@@ -341,36 +363,123 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============ 场景加载 ============
 
-    /** 从任意 URI 加载存档，并尝试自动加载场景自带地图 */
+    /**
+     * 从任意 URI 加载存档，并尝试自动加载场景自带地图。
+     * 若传入的是 SAF Tree URI（目录授权），先持久化目录权限（takePersistableUriPermission），
+     * 使同目录地图/背景图/玩家设置均可在本次会话及重启后正常读取。
+     */
     fun loadScenario(uri: Uri) {
+        // Tree URI（OpenDocumentTree 目录授权）→ 持久化权限，确保同目录资源可读
+        if (android.provider.DocumentsContract.isTreeUri(uri)) {
+            try {
+                val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                getApplication<Application>().contentResolver.takePersistableUriPermission(uri, flags)
+            } catch (_: Exception) {
+                // 已授权/不可持久化时忽略
+            }
+        }
         currentUri = uri
         try {
             val loaded = scenarioUseCases.load(uri).getOrElse { throw it }
             applyLoaded(loaded)
             // G55：加载场景目录内 player_settings.json 并应用（桌面 LoadFile → LoadPlayerSettings）。
-            // 语义：文件设置覆盖内存设置（渲染/导出玩家名即时生效）；不写本地 SharedPreferences
-            // （本地是全局默认，文件是场景级设置，两者互不覆盖）。
+            // 语义：文件设置覆盖内存设置（渲染/导出玩家名即时生效）；#13 修复——标记"文件来源"，
+            // 后续 updateSettings/applySettings 不再写本地全局 SharedPreferences（本地是全局默认，
+            // 文件是场景级设置，两者互不覆盖；场景级设置由保存流程回写场景目录）。
+            // 先复位文件来源标记（新加载未应用文件设置前恢复本地默认写回路径）。
+            settingsLoadedFromFile = false
             repo.parentTreeUri(uri)?.let { dir ->
                 repo.loadPlayerSettings(dir)?.let { fileSettings ->
                     settings = fileSettings
-                    toast("已应用场景目录玩家设置")
+                    settingsLoadedFromFile = true
+                    toast("已应用场景目录玩家设置（不覆盖本地全局默认）")
                 }
             }
             loaded.scenario.mapFileName?.takeIf { it.isNotBlank() }?.let { mapName ->
                 autoLoadMap(mapName, uri)
             }
         } catch (e: Exception) {
+            // #12：加载失败写入错误日志（不混入成功消息）
+            logError("加载失败：${e.message}")
             toast("加载失败：${e.message}")
         }
     }
 
+    /**
+     * 从目录加载场景（桌面版「打开 Scenarios 文件夹」语义）：
+     * 目录内查找 Referee 明文存档（优先 Referee.json，回退任意 .json / .SpScn），
+     * 找到后走 loadScenario 完整加载（含同目录地图/背景图/玩家设置自动读取）。
+     */
+    fun loadScenarioFromDirectory(directoryUri: Uri) {
+        if (!android.provider.DocumentsContract.isTreeUri(directoryUri)) {
+            toast("请选择场景文件夹")
+            return
+        }
+        try {
+            val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            getApplication<Application>().contentResolver.takePersistableUriPermission(directoryUri, flags)
+        } catch (_: Exception) {
+        }
+        try {
+            val scenarioUri = repo.findChild(directoryUri, "Referee.json")
+                ?: repo.findFirstChild(directoryUri) { it.endsWith(".json", ignoreCase = true) || it.endsWith(".spscn", ignoreCase = true) }
+            if (scenarioUri == null) {
+                toast("目录中未找到场景存档（.json / .SpScn）")
+                return
+            }
+            loadScenario(scenarioUri)
+        } catch (e: Exception) {
+            logError("目录加载场景失败：${e.message}")
+            toast("目录加载场景失败：${e.message}")
+        }
+    }
+
     fun applyLoaded(loaded: ScenarioFile) {
+        // R1 防御：重开存档清瞬态新建标记（桌面版无此标志；保证新建不因持久化残留而永久不动）
+        loaded.units.forEach { it.isNewThisTurn = false }
+        // R4：跨存盘恢复毫米余额运行时镜像（RangeMm 持久化键 → rangeNmMm）
+        loaded.units.forEach { it.initRangeMmFromPersisted() }
+        turnState = com.simplot.android.engine.TurnState.detect(loaded)
+        // 修复：过滤同刻生死（Created==Deleted 非哨兵）单位 — PC 已删不画的 5 个白/蓝点根因
+        val now = loaded.time.currentPositionTime
+        val filtered = loaded.units.filterNot { it.isSameTickDeleted() || !it.isAliveAt(now) }.toMutableList()
+        if (filtered.size != loaded.units.size) {
+            logError("已过滤 ${loaded.units.size - filtered.size} 个已删/同刻生死单位（PC 不显示）")
+        }
+        // 保持存档结构：Objects 与 Units 同步
+        val aliveIds = filtered.map { it.idNum }.toSet()
+        loaded.units = filtered
+        loaded.objects = loaded.objects.filter { it in aliveIds }.toMutableList()
+        // 先清空上一场景地图（parser 数据 + 背景位图 + 比例尺），避免无地图或新地图场景残留旧底图与边界
+        mapRenderer.clearMap()
         file = loaded
         selectedUnitId = null
+        editUnit = null
+        editArcUnit = null
+        editWaypointsUnit = null
+        clipboardUnit = null
+        rangeExhaustedUnit = null
+        finalWaypointUnit = null
+        finalWaypointQueue.clear()
+        replayTimeline = emptyList()
+        replayPlaying = false
+        replayIndex = 0
+        measureMode = false
+        clearMeasures()
+        showNewUnit = false
+        showConvoy = false
+        showFormation = false
+        showNewScenario = false
+        showExportOrders = false
+        // #3 修复：场景切换时清空编队规格内存注册表（G02 空编队仅存内存；
+        // 不清空会导致加载新场景后出现上一场景的"幻影编队"——与 createNewScenario 保持一致）
+        formationSpecs.clear()
         // R7：解析 Overlays → Misc 标注
         miscAnnotations = com.simplot.android.domain.engine.MiscAnnotationParser.parse(loaded.overlays)
         revision++
-        // 视野自适应由 SceneCanvas.onSizeChanged 按真实画布尺寸执行
+        // 视野自适应由 SceneCanvas 的 LaunchedEffect(file, canvasSize) 按真实画布尺寸与新场景坐标自动执行
         toast("已加载场景：${loaded.scenario.scenarioName}（${loaded.units.size} 单位）")
         // Bug 1 防御：Gson 对缺 Side 字段的单位静默落默认值 "Blue"（Unit.side 默认值）
         // → 单位非空且全部为 Blue 时提示用户场景可能缺 Side 字段；
@@ -384,20 +493,47 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     /** 加载地图文件：.json → MapMaker 配置；.map/.txt → 光栅地图配置；图片 → 位图 */
     fun loadMapFile(uri: Uri) {
         try {
-            val name = queryDisplayName(uri)?.lowercase() ?: ""
+            val displayName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: ""
+            val name = displayName.lowercase()
             if (name.endsWith(".json")) {
                 val text = openText(uri) ?: throw IllegalStateException("无法读取地图配置")
                 mapRenderer.parseMapConfigJson(text)
+                // 更新当前场景的地图文件名与地图类型（保存时持久化，对齐桌面版）
+                file?.scenario?.let { scn ->
+                    scn.mapFileName = displayName
+                    if (scn.typeOfMap == 0) scn.typeOfMap = 1
+                }
+                val bg = mapRenderer.pendingBackgroundName
+                if (!bg.isNullOrBlank()) {
+                    // 尝试从地图同目录加载背景图
+                    val bgUri = repo.findSibling(uri, bg)
+                    if (bgUri != null) {
+                        mapRenderer.loadMapImage(getApplication<Application>().contentResolver, bgUri)
+                    } else {
+                        toast("未找到背景图文件：$bg（请放入与地图相同目录后重试）")
+                    }
+                }
                 toast("地图配置已加载${if (mapRenderer.pendingBackgroundName != null) "：${mapRenderer.pendingBackgroundName}" else ""}")
             } else if (name.endsWith(".map") || name.endsWith(".txt")) {
                 // R5：光栅地图（桌面版 MercatorRaster）MAP/SCALE/CITY/COUNTRY
                 val text = openText(uri) ?: throw IllegalStateException("无法读取地图配置")
                 val mapName = StringBuilder()
                 val ok = mapRenderer.parser.parseRasterMap(text, mapName)
+                // 关键：把 SCALE（像素/海里）接入底图定位，否则 drawBitmap 走像素原图分支导致底图画在左上角
+                mapRenderer.applyRasterScale(mapRenderer.parser.mapScale)
+                file?.scenario?.let { scn ->
+                    scn.mapFileName = displayName
+                    if (scn.typeOfMap == 0) scn.typeOfMap = 1
+                }
                 if (mapName.isNotEmpty()) {
-                    // 尝试加载同目录光栅图
-                    val imgUri = findSibling(uri, mapName.toString())
-                    if (imgUri != null) mapRenderer.loadMapImage(getApplication<Application>().contentResolver, imgUri)
+                    val rName = mapName.toString()
+                    // 从光栅地图同目录加载底图
+                    val imgUri = repo.findSibling(uri, rName)
+                    if (imgUri != null) {
+                        mapRenderer.loadMapImage(getApplication<Application>().contentResolver, imgUri)
+                    } else {
+                        toast("未找到底图文件：$rName（请放入与地图相同目录后重试）")
+                    }
                 }
                 toast(if (ok) "光栅地图已加载${if (mapName.isNotEmpty()) "：$mapName" else ""}" else "光栅地图已解析（缺 SCALE，标注未换算）")
             } else {
@@ -409,54 +545,138 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 场景 MapFileName 指向的地图：从场景同目录解析配置 + 背景图 */
+    /** 场景 MapFileName 指向的地图：严格从场景同目录读取（对齐桌面版 LoadMapFromScenarioFolder），不引入任何内置资源 */
     private fun autoLoadMap(mapName: String, scenarioUri: Uri) {
         try {
-            val cfgUri = findSibling(scenarioUri, mapName)
-            if (cfgUri != null) {
-                val text = openText(cfgUri) ?: return
-                mapRenderer.parseMapConfigJson(text)
-                mapRenderer.pendingBackgroundName?.let { bg ->
-                    val bgUri = findSibling(scenarioUri, bg)
-                    if (bgUri != null) mapRenderer.loadMapImage(getApplication<Application>().contentResolver, bgUri)
+            val lower = mapName.lowercase()
+            // 仅从场景同目录读取（桌面版 LoadMapFromScenarioFolder 语义）
+            val cfgUri = repo.findSibling(scenarioUri, mapName)
+            if (cfgUri == null) {
+                logError("未找到地图文件：$mapName（场景目录无此文件）")
+                toast("未找到地图文件：$mapName，请点击顶部「地图」手动选择")
+                return
+            }
+            if (lower.endsWith(".json") || lower.endsWith(".map") || lower.endsWith(".txt")) {
+                val text = openText(cfgUri) ?: run {
+                    logError("地图文件读取失败：$mapName")
+                    toast("地图文件读取失败：$mapName")
+                    return
                 }
-                toast("已加载地图：$mapName")
+                if (lower.endsWith(".json") || text.trimStart().startsWith("{")) {
+                    mapRenderer.parseMapConfigJson(text)
+                    val bg = mapRenderer.pendingBackgroundName
+                    if (!bg.isNullOrBlank()) {
+                        val bgUri = repo.findSibling(scenarioUri, bg)
+                        if (bgUri != null) {
+                            mapRenderer.loadMapImage(getApplication<Application>().contentResolver, bgUri)
+                        } else {
+                            toast("未找到背景图文件：$bg（请放入场景目录后重试）")
+                        }
+                    }
+                    toast("已加载地图：$mapName")
+                } else {
+                    val rasterImgName = StringBuilder()
+                    mapRenderer.parser.parseRasterMap(text, rasterImgName)
+                    // 关键：把 SCALE（像素/海里）接入底图定位
+                    mapRenderer.applyRasterScale(mapRenderer.parser.mapScale)
+                    if (rasterImgName.isNotEmpty()) {
+                        val rName = rasterImgName.toString()
+                        val imgUri = repo.findSibling(scenarioUri, rName)
+                        if (imgUri != null) {
+                            mapRenderer.loadMapImage(getApplication<Application>().contentResolver, imgUri)
+                        } else {
+                            toast("未找到底图文件：$rName（请放入场景目录后重试）")
+                        }
+                    }
+                    toast("已加载光栅地图：$mapName")
+                }
+            } else {
+                mapRenderer.loadMapImage(getApplication<Application>().contentResolver, cfgUri)
+                toast("已加载地图图片：$mapName")
             }
         } catch (e: Exception) {
             // 地图缺失不阻塞场景加载
+            logError("地图加载失败：${e.message}")
+            toast("未找到地图文件：$mapName，请点击顶部「地图」手动选择")
         }
     }
 
-    /** 在 URI 所在目录按文件名查找兄弟文件（document id 最后一段替换，文件名需 URL 编码） */
-    private fun findSibling(uri: Uri, name: String): Uri? {
-        val docId = uri.lastPathSegment ?: return null
-        val slash = docId.lastIndexOf('/')
-        val parent = if (slash >= 0) docId.substring(0, slash + 1) else ""
-        return Uri.parse("content://" + uri.authority + "/document/" + parent + Uri.encode(name))
-    }
-
     private fun queryDisplayName(uri: Uri): String? {
+        if (uri.scheme == "file") {
+            return uri.path?.let { java.io.File(it).name }
+        }
         return try {
             getApplication<Application>().contentResolver.query(uri, null, null, null, null)?.use { c ->
                 if (c.moveToFirst()) {
                     val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0) c.getString(idx) else null
-                } else null
-            }
+                    if (idx >= 0) c.getString(idx) else uri.lastPathSegment
+                } else uri.lastPathSegment
+            } ?: uri.lastPathSegment
         } catch (e: Exception) {
-            null
+            uri.lastPathSegment
         }
     }
 
     private fun openText(uri: Uri): String? {
-        return try {
-            getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-        } catch (e: Exception) {
-            null
-        }
+        return repo.readText(uri)
     }
 
     // ============ 保存 / 导出 ============
+
+    /**
+     * 保存场景包到指定目录（桌面版 Save Scenario 完整语义）：
+     * 自动生成四个文件：
+     * - <场景名>.json → Referee 明文
+     * - Blue.SpScn    → 蓝方感知过滤混淆存档
+     * - Red.SpScn     → 红方感知过滤混淆存档
+     * - player_settings.json → 玩家本地显示设置
+     * 且自动将关联的地图配置（.json/.map）与背景图（.jpg/.png）同步到保存目录，确保桌面端/移动端打开即有完整地图。
+     */
+    fun saveThreeFilesToDirectory(directoryUri: Uri) {
+        val current = file ?: run {
+            toast("请先打开一个场景")
+            return
+        }
+        try {
+            val name = current.scenario.scenarioName.ifBlank { "scenario" }
+            val blueView = com.simplot.android.engine.FogOfWar.applyPerspective(current, "Blue")
+            val redView = com.simplot.android.engine.FogOfWar.applyPerspective(current, "Red")
+            repo.savePerceptionAware(directoryUri, name, current, blueView, redView)
+            repo.savePlayerSettings(directoryUri, settings)
+
+            // 同步地图配置与背景图文件到保存目录（仅从当前场景目录复制用户已有文件，不引入任何内置资源）
+            val mapName = current.scenario.mapFileName
+            if (!mapName.isNullOrBlank()) {
+                val existingMap = repo.findChild(directoryUri, mapName)
+                if (existingMap == null) {
+                    val mapBytes = currentUri?.let { repo.findSibling(it, mapName)?.let { u -> repo.readBytes(u) } }
+                    if (mapBytes != null) {
+                        val newMapUri = repo.createFile(directoryUri, mapName, "application/json")
+                        repo.writeBytes(newMapUri, mapBytes)
+                    }
+                }
+                val bgName = mapRenderer.pendingBackgroundName
+                if (!bgName.isNullOrBlank()) {
+                    val existingBg = repo.findChild(directoryUri, bgName)
+                    if (existingBg == null) {
+                        val bgBytes = currentUri?.let { repo.findSibling(it, bgName)?.let { u -> repo.readBytes(u) } }
+                        if (bgBytes != null) {
+                            val newBgUri = repo.createFile(directoryUri, bgName, "image/jpeg")
+                            repo.writeBytes(newBgUri, bgBytes)
+                        }
+                    }
+                }
+            }
+
+            // 更新当前场景 URI 为保存后的 Referee JSON
+            repo.findChild(directoryUri, "$name.json")?.let { currentUri = it }
+
+            toast("已生成完整场景包：$name.json + Blue.SpScn + Red.SpScn + 地图与设置")
+        } catch (e: Exception) {
+            logError("保存场景包失败：${e.message}")
+            toast("保存场景包失败：${e.message}")
+        }
+    }
 
     /**
      * 反馈⑱：保存三文件到指定目标文件（系统「保存为」对话框返回的 document uri）。
@@ -470,7 +690,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         try {
             val saved = scenarioUseCases.saveThreeFiles(targetUri, current).getOrElse { throw it }
-            repo.parentTreeUri(targetUri)?.let { repo.savePlayerSettings(it, settings) }
+            currentUri = targetUri
+            repo.parentTreeUri(targetUri)?.let { parent ->
+                repo.savePlayerSettings(parent, settings)
+                val mapName = current.scenario.mapFileName
+                if (!mapName.isNullOrBlank() && repo.findChild(parent, mapName) == null) {
+                    val mapBytes = currentUri?.let { repo.findSibling(it, mapName)?.let { u -> repo.readBytes(u) } }
+                    if (mapBytes != null) {
+                        val newMapUri = repo.createFile(parent, mapName, "application/json")
+                        repo.writeBytes(newMapUri, mapBytes)
+                    }
+                }
+            }
             toast(if (saved) "已保存：Referee json + Blue.SpScn + Red.SpScn（含玩家设置）" else "已保存 Referee json")
         } catch (e: Exception) {
             toast("保存失败：${e.message}")
@@ -584,7 +815,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 if (replaced) "已导入单位并替换：${unit.name}（${unit.idNum}）"
                 else "已导入新单位：${unit.name}（${unit.idNum}）"
             )
+            // #23（G28）：导入单位 TrackNumber 可能与场景既有单位冲突（基本版不重分配）→ 提示
+            val conflict = f.units.any { it.idNum != unit.idNum && it.trackNumber == unit.trackNumber }
+            if (conflict) {
+                logError("警告：导入单位 ${unit.idNum} 的航迹号 ${unit.trackNumber} 与场景既有单位冲突")
+                toast("提示：${unit.name}（TN ${unit.trackNumber}）与既有单位航迹号冲突，建议手动改号")
+            }
         } catch (e: Exception) {
+            // #12：导入失败写入错误日志
+            logError("单位导入失败：${e.message}")
             toast("导入失败：${e.message}")
         }
     }
@@ -593,40 +832,63 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun doTurn() {
         val f = file ?: return
-        // 门禁（反馈②③）：非 DO_BEFORE/DO_NEXT 状态禁止 Do，不产生任何副作用
-        val result = com.simplot.android.domain.usecase.AdvanceTurnUseCase.execute(f, f.time.currentTurnInterval)
-            ?: run { toast("当前状态不可 Do（请先 Undo 或 Next）"); return }
-        revision++
-        // Range 耗尽检测：桌面版三选弹窗（Continue/Delete/Stop）；已选"继续移动"不再提示
-        result.rangeExhausted.firstOrNull()?.let { id -> rangeExhaustedUnit = f.units.firstOrNull { it.idNum == id } }
-        // G40：到达最终航路点三选弹窗（桌面 NoFutureWaypoints：Continue/Delete/Stop）。
-        // 一次 Do 多艘船到达时排队逐个弹出；Range 弹窗优先（两个弹窗不叠加）。
-        finalWaypointQueue.clear()
-        finalWaypointQueue.addAll(result.finalWaypointReached)
-        if (rangeExhaustedUnit == null) popNextFinalWaypoint()
-        // 自动存档（桌面版 SaveAuto：每回合 Referee Turn N）
-        autoSave()
-        toast("Do：已移动至 ${result.newPositionTime}")
+        try {
+            // PC 对齐：Do = 推进 PositionTime + Phase=2（不推进 TurnTime，不追加 Turns），
+            // 仅 DO_BEFORE（初始规划）与 DO_NEXT（已确认新一轮）可 Do；DO_AFTER 已移动必须先 Undo/Next。
+            // 存档只读判定（Blue/Red.SpScn 视角或 SAF 目标不可写）仅作用于保存链（saveThreeFilesTo/saveAuto/saveSetup），
+            // 不拦截 Do 推进本身——桌面版 PushNextTurn/UndoTurn 也如此（先推时间再 SaveAuto）。
+            val stateBefore = com.simplot.android.engine.TurnState.detect(f)
+            val result = com.simplot.android.domain.usecase.AdvanceTurnUseCase.execute(f, f.time.currentTurnInterval)
+                ?: run {
+                    val msg = when (stateBefore) {
+                        com.simplot.android.engine.TurnState.State.DO_AFTER -> "已移动：请先 Undo 撤销或 Next 确认后再 Do"
+                        else -> "当前状态不可 Do"
+                    }
+                    toast(msg); return
+                }
+            revision++
+            turnState = com.simplot.android.engine.TurnState.State.DO_AFTER
+            // Range 耗尽检测：桌面版三选弹窗（Continue/Delete/Stop）；已选"继续移动"不再提示
+            result.rangeExhausted.firstOrNull()?.let { id -> rangeExhaustedUnit = f.units.firstOrNull { it.idNum == id } }
+            // G40：到达最终航路点三选弹窗（桌面 NoFutureWaypoints：Continue/Delete/Stop）。
+            // 一次 Do 多艘船到达时排队逐个弹出；Range 弹窗优先（两个弹窗不叠加）。
+            finalWaypointQueue.clear()
+            finalWaypointQueue.addAll(result.finalWaypointReached)
+            if (rangeExhaustedUnit == null) popNextFinalWaypoint()
+            // 自动存档（桌面版 SaveAuto：每回合 Referee Turn N）
+            autoSave()
+            toast("Do：已移动至 ${result.newPositionTime}")
+        } catch (e: Exception) {
+            val m = e.message ?: "(无消息)"; logError("Do 失败：${e.javaClass.simpleName}: $m @ ${e.stackTrace.firstOrNull()?.toString() ?: ""}"); toast("Do 失败：${e.javaClass.simpleName}: $m")
+        }
     }
 
     fun undo() {
         val f = file ?: return
-        // 门禁（反馈②③）：仅 Do 后未确认可 Undo（拦截 DO_BEFORE 下回退时间的危险路径）
+        try {
+        // PC 对齐：Undo 仅 DO_AFTER（Do 后未确认）可用——桌面 UndoTurn 时间回退+恢复上一回合；
+        // DO_BEFORE 初动下回退会把 PositionTime 推到初始之前（含快照清空），由 canUndo 拦截。
         if (!com.simplot.android.domain.usecase.AdvanceTurnUseCase.undo(f, f.time.currentTurnInterval)) {
-            toast("当前状态不可 Undo"); return
+            val s = com.simplot.android.engine.TurnState.detect(f)
+            toast(if (s == com.simplot.android.engine.TurnState.State.DO_BEFORE) "未移动：无需 Undo" else "当前状态不可 Undo"); return
         }
         revision++
+        turnState = com.simplot.android.engine.TurnState.detect(f)
         toast("Undo")
+        } catch (e: Exception) { logError("Undo 失败：${e.message}"); toast("Undo 失败：${e.message}") }
     }
 
     fun next() {
         val f = file ?: return
-        // 门禁（反馈②③）：仅 Do 后未确认可 Next
+        try {
+        // PC 对齐：Next 仅 DO_AFTER 可用——TurnTime 追上 PositionTime、Turns 追加、Phase 回 0（确认回合），不产生新移动。
         if (!com.simplot.android.domain.usecase.AdvanceTurnUseCase.next(f, f.time.currentTurnInterval)) {
             toast("请先 Do 再 Next 确认"); return
         }
         revision++
+        turnState = com.simplot.android.engine.TurnState.State.DO_NEXT
         toast("Next：回合已确认")
+        } catch (e: Exception) { logError("Next 失败：${e.message}"); toast("Next 失败：${e.message}") }
     }
 
     // ============ 单位编辑 ============
@@ -768,6 +1030,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      * 创建护航队（P2 恢复，桌面版 Game.Convoy.CreateConvoy）。
      * G03：参数契约 = [ConvoySpec]（含航向/速度/列行数/列行间距；列行>0 走网格布局）。
      * COMMODORE 居中，Merchant 环绕/网格，角度均匀分布或列×行排布。
+     * #4 修复：指挥舰以当前视野中心为原点（camera.centerWorldX/Y），
+     * 避免护航队整体落在 (0,0) 视野外——与 NewUnitDialog 默认=视野中心同源修复。
      * 逻辑在 [com.simplot.android.domain.engine.ConvoyEngine]（纯 Kotlin 可单测）。
      */
     fun createConvoy(spec: com.simplot.android.domain.engine.ConvoyEngine.ConvoySpec = com.simplot.android.domain.engine.ConvoyEngine.ConvoySpec()) {
@@ -778,7 +1042,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 nextId = { prefix -> nextId(f, prefix) },
                 // N2 修复：护航队也走 TrackNumber 计数器（与新建/复制单位一致），
                 // 桌面续建不撞号（原 ConvoyEngine 本地 max+1 不写回 currentTrackNumber）
-                nextTrackNumber = { side -> allocateTrackNumber(f, side) }
+                nextTrackNumber = { side -> allocateTrackNumber(f, side) },
+                // #4：以视野中心为指挥舰原点
+                centerX = camera.centerWorldX,
+                centerY = camera.centerWorldY
             )
             f.units.addAll(units)
             revision++
@@ -821,13 +1088,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         replayIndex = 0
         measureMode = false
         clearMeasures()
+        showNewUnit = false
+        showConvoy = false
+        showFormation = false
+        showNewScenario = false
+        showExportOrders = false
         miscAnnotations = emptyList()
         formationSpecs.clear()
-        // 无地图的新场景清掉上一场景残留地图（parser 数据 + 背景位图）
+        // #13：新场景无场景目录 player_settings.json → 恢复本地全局默认写回路径
+        settingsLoadedFromFile = false
+        // R1 防御：新场景单位清空期无残留标记（与 applyLoaded 对称）
+        // 无地图的新场景清掉上一场景残留地图（parser 数据 + 背景位图 + 比例尺）
         if (mapFileName.isNullOrBlank()) {
-            mapRenderer.parser.clear()
-            mapRenderer.bitmap = null
-            mapRenderer.pendingBackgroundName = null
+            mapRenderer.clearMap()
         }
         revision++
         toast("已创建新场景：${name.trim()}，起始 ${startTime}（可添加单位并保存）")
@@ -1001,7 +1274,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 val distMeters = distNm * 1852.0
                 sb.append("M${i + 1},")
                 sb.append("${start.first},${start.second},${end.first},${end.second},")
-                sb.append(String.format("%.1f,%.2f,%.1f,%.1f\n", bearing, distNm, distYards, distMeters))
+                // #15：显式 Locale.US（中文/欧陆 locale 小数点均为 '.'，防御性）
+                sb.append(String.format(java.util.Locale.US, "%.1f,%.2f,%.1f,%.1f\n", bearing, distNm, distYards, distMeters))
             }
             val uri = repo.createFile(
                 directory,
@@ -1045,9 +1319,26 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         toast("视图：${showSideLabel(showSide)}")
     }
 
-    fun dismissRangeDialog() {
+    /** 弹出队列中下一个仍在场的耗尽单位；空则关闭并顺延最终航路点弹窗 */
+    private fun popNextRangeExhausted() {
+        val f = file ?: run { rangeExhaustedUnit = null; return }
+        while (rangeExhaustedQueue.isNotEmpty()) {
+            val id = rangeExhaustedQueue.removeAt(0)
+            val u = f.units.firstOrNull { it.idNum == id }
+            if (u != null) {
+                rangeExhaustedUnit = u
+                return
+            }
+        }
         rangeExhaustedUnit = null
-        // G40：Range 弹窗优先，关闭后顺延弹出最终航路点队列
+        // Range 队列清完 → 顺延 G40 弹窗（保持 Range 优先语义）
+        popNextFinalWaypoint()
+    }
+
+    fun dismissRangeDialog() {
+        // 关闭=未处理的耗尽单位按桌面默认继续直行（不产生状态变更），清队列后顺延 G40
+        rangeExhaustedUnit = null
+        rangeExhaustedQueue.clear()
         popNextFinalWaypoint()
     }
 
@@ -1060,7 +1351,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             revision++
         }
         toast("${u.name} 继续（无视航程限制）")
-        popNextFinalWaypoint()
+        popNextRangeExhausted()
     }
 
     /** Range 耗尽三选：删除单位 */
@@ -1074,7 +1365,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             revision++
         }
         toast("已删除 ${u.name}")
-        popNextFinalWaypoint()
+        popNextRangeExhausted()
     }
 
     /** Range 耗尽三选：停止单位（Range 置无限制并停船） */
@@ -1085,12 +1376,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             val t = f.units.firstOrNull { it.idNum == u.idNum }
             if (t != null) {
                 t.range = MovementEngine.RANGE_UNLIMITED
+                t.rangeNmMm = -1L   // R4：无限航程重置毫米镜像，防旧余额残留反向覆盖
                 t.speed = 0
             }
             revision++
         }
         toast("${u.name} 已停止")
-        popNextFinalWaypoint()
+        popNextRangeExhausted()
     }
 
     // ============ G40：到达最终航路点三选（桌面 NoFutureWaypoints） ============
@@ -1121,6 +1413,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         finalWaypointUnit = null
         toast("${u.name} 继续移动（沿当前航向直行）")
         popNextFinalWaypoint()
+    }
+
+    /**
+     * #6（G40）：全部继续——一次 Do 多艘船到达最终航路点时批量跳过（桌面 Continue Movement 语义）。
+     * 清空待弹队列并关闭弹窗，不做任何状态变更（无航路点单位沿当前航向直行，引擎本就如此）。
+     */
+    fun continueAllFinalWaypoints() {
+        val n = 1 + finalWaypointQueue.size
+        finalWaypointUnit = null
+        finalWaypointQueue.clear()
+        toast("已全部继续移动（$n 艘船沿当前航向直行）")
     }
 
     /** 删除单位（桌面 NoFutureWaypoints Delete Unit） */

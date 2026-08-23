@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -65,23 +66,26 @@ fun NewUnitDialog(
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.verticalScroll(rememberScrollState())
+                modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
             ) {
-                // Domain 大类下拉
-                LabeledDropdown(
-                    label = "类型大类",
-                    options = domainOptions.map { it.label },
-                    selected = domain.label,
-                    onSelect = { idx -> domain = domainOptions[idx]; type = UnitTypeRegistry.typesOf(domain).firstOrNull() ?: "" }
-                )
-                // 子类型下拉（桌面版 Fill*Types）
-                if (typeOptions.isNotEmpty()) {
+                // P1-4：类型大类与子类型同行（在家竖屏也比各占一行的长滚动更省扫视）
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     LabeledDropdown(
-                        label = "子类型",
-                        options = typeOptions,
-                        selected = type,
-                        onSelect = { idx -> type = typeOptions[idx] }
+                        label = "大类",
+                        options = domainOptions.map { it.label },
+                        selected = domain.label,
+                        onSelect = { idx -> domain = domainOptions[idx]; type = UnitTypeRegistry.typesOf(domain).firstOrNull() ?: "" },
+                        modifier = Modifier.weight(1f)
                     )
+                    if (typeOptions.isNotEmpty()) {
+                        LabeledDropdown(
+                            label = "子类型",
+                            options = typeOptions,
+                            selected = type,
+                            onSelect = { idx -> type = typeOptions[idx] },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
                 OutlinedTextField(value = name, onValueChange = { name = it },
                     label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -129,10 +133,11 @@ private fun LabeledDropdown(
     label: String,
     options: List<String>,
     selected: String,
-    onSelect: (Int) -> kotlin.Unit
+    onSelect: (Int) -> kotlin.Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = modifier) {
         OutlinedTextField(
             value = selected,
             onValueChange = {},

@@ -76,13 +76,6 @@ class EngineTest {
     }
 
     @Test
-    fun `turn less than 10 deg no advance point`() {
-        val f = scenario(listOf(surfaceUnit("S001", "Blue", 0, 0, 20.0, 0.0)))
-        val result = MovementEngine.turnMotion(0, 0, 0.0, 5.0, 1000000.0, 400.0 * 100000 / 2025.37)
-        assertEquals(0, result.turnPoints.size)
-    }
-
-    @Test
     fun `zero distance does not turn`() {
         val f = scenario(listOf(surfaceUnit("S001", "Blue", 0, 0, 0.0, 0.0)))
         MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
@@ -134,18 +127,22 @@ class EngineTest {
 
     @Test
     fun `range depletes and stops unit`() {
-        // Range 单位：海里整数；12 节 × 3 分钟 = 0.6 海里/回合
+        // R4 毫米海里余额：12 节 × 3 分钟 = 0.6 海里/回合；1 海里分两回合耗尽（0.6+0.4）
         val u = surfaceUnit("S001", "Blue", 0, 0, 12.0, 90.0)
         u.range = 1  // 仅 1 海里航程
         val f = scenario(listOf(u))
         MovementEngine.advance(f, TurnInterval(3, 0))
         val moved = f.units.first()
         assertEquals(60000L, moved.x)   // 0.6 海里移动
-        assertEquals(0, moved.range)    // Range 耗尽
-        // 下一回合：Range=0 → 不再移动
+        assertEquals(0, moved.range)    // 整海里已为 0（真实余额 0.4 海里仍在 rangeNmMm）
+        // 下一回合：剩余 0.4 海里 → 再走 0.4（40000）后耗尽
         MovementEngine.advance(f, TurnInterval(3, 0))
-        assertEquals(60000L, moved.x)
+        assertEquals(100000L, moved.x)
         assertEquals(0L, moved.y)
+        assertEquals(0, moved.range)
+        // 第三回合：真正耗尽 → 不再移动
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        assertEquals(100000L, moved.x)
     }
 
     @Test
@@ -195,17 +192,58 @@ class EngineTest {
         assertTrue(wp[0].isTurnTime)
     }
 
+    @Test
+    fun `movement waypoint carries speed course and incrementing number`() {
+        // P2-1 修复回归：轨迹点补齐 Speed/Course（此前恒 0，桌面版航迹失真）与递增序号。
+        val u = surfaceUnit("S001", "Blue", 0, 0, 15.0, 270.0)
+        val f = scenario(listOf(u))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        var wp = f.units.first().pastWaypointArray
+        assertEquals(1, wp.size)
+        // 记录的是"移动完成后的状态"：15 节（×1000=15000）、航向 270°（×1000=270000）
+        assertEquals(15000, wp[0].speed)
+        assertEquals(270000, wp[0].course)
+        assertEquals(1, wp[0].number)
+        // 第二回合：新轨迹点序号递增为 2
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        wp = f.units.first().pastWaypointArray
+        assertEquals(2, wp.size)
+        assertEquals(2, wp[1].number)
+    }
+
     // ============ D9 桌面化回归（2026-08-10：无转向损失/无前冲/无加速档，匀速直航） ============
 
     private fun polarUnit(id: String, course: Double, maxSpeed: Double, unitClass: String = "CL"): Unit {
         return surfaceUnit(id, "Blue", 0, 0, 12.0, course).apply {
-            this.maxSpeedKnots = maxSpeed
+            // E3：maxSpeedKnots 已移除，polarUnit 保留参数兼容旧调用点但不再写入模型字段
             this.unitClass = unitClass
         }
     }
 
-    private fun levelClass(unitClass: String, maxSpeed: Double): String =
-        com.simplot.android.engine.SizeLevels.levelName(unitClass, maxSpeed)
+    @Test
+    fun `reached final waypoint marked only when last future waypoint consumed`() {
+        // #6（G40）：引擎精确标记——本回合消费最后一个未来航路点的单位 reachedFinalWaypoint=true；
+        // 从未设航线的单位（历史有轨迹、当前无未来航路点）不被标记（修复 v0.6.0 判定过宽误报）。
+        // 单位朝正北（course 0）移动，航路点在其正前方 0.6 海里（y=60000）；
+        // 24 节 × 3 分钟 = 1.2 海里 ≥ 归档阈值 → 一回合到达并归档（ArchiveFutureWaypoint）。
+        val u1 = surfaceUnit("S001", "Blue", 0, 0, 24.0, 0.0).apply {
+            futureWaypointArray.add(
+                com.simplot.android.data.model.Waypoint(x = 0, y = 60000, number = 1, isTurnTime = true, positionTime = "2026-01-01 00:00:00")
+            )
+        }
+        val u2 = surfaceUnit("S002", "Blue", 0, 100, 12.0, 0.0).apply {
+            // 历史有轨迹、当前无未来航路点：不应被误标
+            pastWaypointArray.add(
+                com.simplot.android.data.model.Waypoint(x = 0, y = 100, number = 1, isTurnTime = true, positionTime = "2026-01-01 00:00:00")
+            )
+        }
+        val f = scenario(listOf(u1, u2))
+        MovementEngine.advance(f, TurnInterval(3, 0))
+        val moved1 = f.units.first { it.idNum == "S001" }
+        assertTrue("u1 消费了最后一个未来航路点应被标记", moved1.reachedFinalWaypoint)
+        assertTrue("u1 航路点应已归档", moved1.futureWaypointArray.isEmpty())
+        assertFalse("u2 从未设航线不应被标记", f.units.first { it.idNum == "S002" }.reachedFinalWaypoint)
+    }
 
     @Test
     fun `d9 course change applies directly no turn loss`() {
@@ -232,19 +270,6 @@ class EngineTest {
             "S001" to MovementEngine.UnitMove("S001", newSpeed = 25.0)
         ))
         assertEquals(25.0, f.units.first().speedKnots(), 0.01)
-    }
-
-    @Test
-    fun `d9 boost adds one accel level no turn penalty`() {
-        // D9：boost = 原速 + 尺寸级 accel（无 75% 分档、无转向损失）
-        val u = polarUnit("S001", 30.0, 31.0, "BB")
-        val f = scenario(listOf(u))
-        MovementEngine.advance(f, TurnInterval(3, 0), mapOf(
-            "S001" to MovementEngine.UnitMove("S001", newCourse = 260.0, boost = true)
-        ))
-        // fastA accel=6 → 12+6=18；转向无损失
-        assertEquals(18.0, f.units.first().speedKnots(), 0.01)
-        assertEquals(260.0, f.units.first().courseDeg(), 0.01)
     }
 
     @Test
@@ -309,7 +334,9 @@ class ReplayTest {
     // ============ 高度/深度引擎（桌面版 ChangeAltitude/ChangeDepth）============
     // 2026-08-11 修正：Altitude/Depth/AssignedAltDepth/速率均为 ×1000 定点（red 存档实测 3000000=3000m）
 
-    /** 飞机：指定高度（米）+ 未来航路点目标高度/速率（米）——内部 ×1000 */
+    /** 飞机：指定高度（米）+ 未来航路点目标高度/速率（米）——内部 ×1000
+     * R2 后顺序 move→archive→altitude，若航路点与单位同位会立即归档导致高度不变；
+     * 故航路点置于 2 海里外（>1nm阈值）保证本回合不归档、高度按首航路点趋近。 */
     private fun airUnit(id: String, altitudeM: Int, wpTargetM: Int, ascentM: Int = 0, descentM: Int = 0): Unit {
         return Unit().apply {
             this.idNum = id
@@ -319,7 +346,7 @@ class ReplayTest {
             if (wpTargetM != 0 || ascentM != 0 || descentM != 0) {
                 futureWaypointArray.add(
                     com.simplot.android.data.model.Waypoint(
-                        x = 0, y = 0, altitudeDepth = altitudeM * 1000,
+                        x = 200000, y = 0, altitudeDepth = altitudeM * 1000,
                         assignedAltDepth = wpTargetM * 1000, ascent = ascentM * 1000, descent = descentM * 1000
                     )
                 )
@@ -327,7 +354,7 @@ class ReplayTest {
         }
     }
 
-    /** 潜艇：指定深度（米） */
+    /** 潜艇：指定深度（米）——同飞机，航路点远置避免 R2 归档抢先 */
     private fun subUnit(id: String, depthM: Int, wpTargetM: Int, ascentM: Int = 0, descentM: Int = 0): Unit {
         return Unit().apply {
             this.idNum = id
@@ -337,7 +364,7 @@ class ReplayTest {
             if (wpTargetM != 0 || ascentM != 0 || descentM != 0) {
                 futureWaypointArray.add(
                     com.simplot.android.data.model.Waypoint(
-                        x = 0, y = 0, altitudeDepth = depthM * 1000,
+                        x = 200000, y = 0, altitudeDepth = depthM * 1000,
                         assignedAltDepth = wpTargetM * 1000, ascent = ascentM * 1000, descent = descentM * 1000
                     )
                 )

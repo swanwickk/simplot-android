@@ -1,12 +1,8 @@
 package com.simplot.android
 
-import com.simplot.android.data.model.Sensor
-import com.simplot.android.data.model.Weapon
-import com.simplot.android.render.sortedArcs
-import com.simplot.android.render.sortedSensorArcs
-import com.simplot.android.render.sortedWeaponArcs
 import com.simplot.android.ui.appendErrorLogEntry
 import com.simplot.android.ui.autoSaveGate
+import com.simplot.android.ui.components.moveItem
 import com.simplot.android.ui.formatLogTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -77,42 +73,24 @@ class Batch4UiPolishTest {
         assertTrue("实际输出: $ts", ts.matches(Regex("""\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}""")))
     }
 
-    // ============ G23：弧固定排序（桌面 ContainerSensors/ContainerWeapons 顺序语义） ============
+    // ============ G23：弧顺序（桌面语义 = 列表顺序即绘制顺序；编辑器 ↑/↓ 重排） ============
 
     @Test
-    fun `sensor arcs sorted by start angle then max range`() {
-        val arcs = listOf(
-            Sensor(tag = "s1", startAngle = 90.0, maxRange = 20.0),
-            Sensor(tag = "s0", startAngle = 0.0, maxRange = 50.0),
-            Sensor(tag = "s2", startAngle = 90.0, maxRange = 10.0)
-        )
-        val sorted = sortedSensorArcs(arcs)
-        assertEquals(listOf("s0", "s2", "s1"), sorted.map { it.tag })
+    fun `move item up reorders preserving order`() {
+        val list = mutableListOf("a", "b", "c")
+        assertTrue(list.moveItem(1, 0))
+        assertEquals(listOf("b", "a", "c"), list)
+        assertTrue(list.moveItem(2, 1))
+        assertEquals(listOf("b", "c", "a"), list)
     }
 
     @Test
-    fun `weapon arcs sorted same as sensors`() {
-        val arcs = listOf(
-            Weapon(tag = "w1", startAngle = 180.0, maxRange = 5.0),
-            Weapon(tag = "w0", startAngle = 45.0, maxRange = 5.0)
-        )
-        val sorted = sortedWeaponArcs(arcs)
-        assertEquals(listOf("w0", "w1"), sorted.map { it.tag })
-    }
-
-    @Test
-    fun `arc sort handles null and empty`() {
-        assertEquals(emptyList<Sensor>(), sortedSensorArcs(null))
-        assertEquals(emptyList<Weapon>(), sortedWeaponArcs(null))
-        assertEquals(emptyList<Sensor>(), sortedSensorArcs(emptyList()))
-    }
-
-    @Test
-    fun `generic arc sort does not mutate original`() {
-        data class FakeArc(val start: Double, val max: Double, val id: String)
-        val original = listOf(FakeArc(90.0, 10.0, "b"), FakeArc(0.0, 10.0, "a"))
-        val sorted = sortedArcs(original, { it.start }, { it.max })
-        assertEquals(listOf("a", "b"), sorted.map { it.id })
-        assertEquals(listOf("b", "a"), original.map { it.id })  // 原列表不变
+    fun `move item rejects invalid indices without modifying`() {
+        val list = mutableListOf("a", "b", "c")
+        assertFalse(list.moveItem(0, 0))   // 同位置
+        assertFalse(list.moveItem(-1, 1))  // 负索引
+        assertFalse(list.moveItem(0, 5))   // 越界
+        assertFalse(list.moveItem(3, 0))   // 越界
+        assertEquals(listOf("a", "b", "c"), list)
     }
 }

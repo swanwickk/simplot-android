@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -64,8 +65,10 @@ fun SettingsDialog(
     errorLog: List<String> = emptyList(),
     onClearErrorLog: () -> kotlin.Unit = {}
 ) {
-    var name by remember { mutableStateOf(settings.playerName) }
-    var s by remember { mutableStateOf(settings) }
+    var name by remember(settings) { mutableStateOf(settings.playerName) }
+    var s by remember(settings) { mutableStateOf(settings) }
+    // #18 修复：本地编辑态 remember 加 settings key——外部传入的 settings 变化（如 Load/Save/Reset
+    // 回调新建对象）时编辑态随之刷新，避免旧本地快照与外部不同步。
     // G09：当前正在选色的颜色键索引（null=无选色弹窗）
     var pickingColorIndex by remember { mutableStateOf<Int?>(null) }
     // G09：Load/Save/Reset 操作反馈（弹窗内文字提示，替代 toast）
@@ -79,15 +82,15 @@ fun SettingsDialog(
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.verticalScroll(rememberScrollState())
+                modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
             ) {
                 OutlinedTextField(value = name, onValueChange = { name = it },
                     label = { Text("玩家名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 HorizontalDivider()
-                // ---- G10：控制选项（桌面 WindowControlOptions：CheckAutoSave） ----
-                Text("控制选项（桌面 WindowControlOptions）", style = MaterialTheme.typography.labelMedium)
+                // ── ① 控制选项 ──
+                Text("① 控制选项", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 SettingsCheckRow("自动存档（CheckAutoSave）", autoSaveEnabled) { onAutoSaveChange(!autoSaveEnabled) }
-                // ---- G11：错误日志入口（桌面 WindowErrorLog） ----
+                // ── 日志入口 ──
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "错误日志 ${errorLog.size} 条",
@@ -97,8 +100,8 @@ fun SettingsDialog(
                     TextButton(onClick = { showErrorLog = true }) { Text("查看…") }
                 }
                 HorizontalDivider()
-                // ---- G47：符号集四选 + WW2 附加切换 ----
-                Text("符号集（桌面 PopupSet）", style = MaterialTheme.typography.labelMedium)
+                // ── ② 符号与尺寸 ──
+                Text("② 符号与尺寸", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 SettingsDropdown(
                     label = "符号集",
                     options = SymbolSet.entries.map { it.label to it.label },
@@ -107,8 +110,8 @@ fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 SettingsCheckRow("WW2 符号（附加切换）", s.ww2Symbols) { s = s.copy(ww2Symbols = !s.ww2Symbols) }
-                // ---- G08：符号尺寸档 ----
-                Text("符号尺寸（桌面 PopupSize）", style = MaterialTheme.typography.labelMedium)
+                // ── 尺寸与背景 ──
+                Text("符号尺寸（桌面 PopupSize）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SettingsDropdown(
                     label = "符号尺寸",
                     options = SymbolSize.entries.map { it.label to it.label },
@@ -119,6 +122,7 @@ fun SettingsDialog(
                 SettingsCheckRow("友军符号（CheckFriendlySymbols）", s.showFriendlySymbols) { s = s.copy(showFriendlySymbols = !s.showFriendlySymbols) }
                 SettingsCheckRow("标签背景色（CheckBackground）", s.useLabelBackground) { s = s.copy(useLabelBackground = !s.useLabelBackground) }
                 HorizontalDivider()
+                Text("③ 图层显示（15 项）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 SettingsCheckRow("显示网格", s.showGrid) { s = s.copy(showGrid = !s.showGrid) }
                 SettingsCheckRow("显示比例尺", s.showScaleBar) { s = s.copy(showScaleBar = !s.showScaleBar) }
                 SettingsCheckRow("显示标签", s.showLabels) { s = s.copy(showLabels = !s.showLabels) }
@@ -135,8 +139,8 @@ fun SettingsDialog(
                 SettingsCheckRow("显示深度区", s.showDepths) { s = s.copy(showDepths = !s.showDepths) }
                 SettingsCheckRow("显示深度键", s.showDepthKey) { s = s.copy(showDepthKey = !s.showDepthKey) }
                 HorizontalDivider()
-                // ---- G09：颜色列表编辑 + Load/Save/Reset（桌面 WindowCustomizeColor）----
-                Text("颜色（桌面 WindowCustomizeColor）", style = MaterialTheme.typography.labelMedium)
+                // ── ④ 颜色（Load/Save/Reset） ──
+                Text("④ 颜色（Load/Save/Reset）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
                         val snap = s.savedColors
@@ -212,7 +216,7 @@ private fun ErrorLogDialog(
             } else {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.verticalScroll(rememberScrollState())
+                    modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
                 ) {
                     log.forEach { entry ->
                         Text(entry, style = MaterialTheme.typography.bodySmall)

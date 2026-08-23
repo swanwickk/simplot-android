@@ -34,6 +34,9 @@ object TurnState {
     fun detect(file: ScenarioFile): State {
         val tt = file.time.currentTurnTime
         val pt = file.time.currentPositionTime
+        // 主判据：Scenario.Phase（桌面版权威字段，advanceTime 置 2 / confirmNext·undo 置 0）
+        if (file.scenario.phase == PHASE_POST_MOVEMENT) return State.DO_AFTER
+        // 兜底（旧存档 phase 缺失/恒 0）：双时钟 + 轨迹推断
         val hasWp = file.units.any { it.pastWaypointArray.isNotEmpty() }
         return when {
             sameTime(tt, pt) -> if (hasWp) State.DO_NEXT else State.DO_BEFORE
@@ -58,9 +61,8 @@ object TurnState {
     /** Next 仅在 DO_AFTER（Do 后未确认）可用 */
     fun canNext(state: State) = state == State.DO_AFTER
 
-    /** 是否为"推进后"状态（Do 后 / Next 后），决定时间推进方式
-     *  @param stateBefore 移动前的状态（必须在使用轨迹点判断前捕获） */
-    fun advanceTime(file: ScenarioFile, interval: TurnInterval, stateBefore: State = detect(file)) {
+    /** 推进时间（Do 移动）：仅 PositionTime 推进；TurnTime 由 Next 追上（#8：移除未使用的 stateBefore 参数） */
+    fun advanceTime(file: ScenarioFile, interval: TurnInterval) {
         val minutes = interval.totalMinutes()
         val newPt = TimeUtil.advance(file.time.currentPositionTime, minutes)
 
@@ -69,21 +71,28 @@ object TurnState {
         file.time.currentPositionTime = newPt
         file.scenario.phase = PHASE_POST_MOVEMENT
         file.time.currentTurnInterval = TurnInterval(interval.minutes, interval.seconds)
+        // R3：快照 Do 时 interval 供 Next 复用（桌面 TurnInterval 按回合记录）
+        file.lastTurnInterval = TurnInterval(interval.minutes, interval.seconds)
     }
 
     /**
      * Next：确认当前回合。TurnTime 追上 PositionTime，Turns 追加，Phase 回 0。
      * （桌面版行为：Do 后按 Next 确认回合，不产生新移动）
+     * R3 修复：优先复用 Do 快照 interval，调用方传参仅为回退
      */
     fun confirmNext(file: ScenarioFile, interval: TurnInterval) {
+        // R3：复用 Do 快照 interval；快照为空（如直接加载 DO_AFTER 存档）则回退调用方传入
+        val useInterval = file.lastTurnInterval ?: interval
         val pt = file.time.currentPositionTime
         file.time.currentTurnTime = pt
         val exists = file.turns.any { sameTime(it.turnTime, pt) }
         if (!exists) {
-            file.turns.add(Turn(turnTime = pt, turnInterval = TurnInterval(interval.minutes, interval.seconds)))
+            file.turns.add(Turn(turnTime = pt, turnInterval = TurnInterval(useInterval.minutes, useInterval.seconds)))
         }
         file.scenario.phase = PHASE_PLOTTING
-        file.time.currentTurnInterval = TurnInterval(interval.minutes, interval.seconds)
+        file.time.currentTurnInterval = TurnInterval(useInterval.minutes, useInterval.seconds)
+        // Next 消费快照（下一轮 Do 会重新写入）
+        file.lastTurnInterval = null
     }
 
     /**
@@ -95,7 +104,12 @@ object TurnState {
      * 并清空快照 → 必须由 VM 层门禁（canUndo）拦截，本函数保持纯引擎语义不设防。
      */
     fun undo(file: ScenarioFile, interval: TurnInterval) {
-        val minutes = interval.totalMinutes()
+        // R3/T8：回退时长优先级 = Do 内存快照 > Turns 历史记录（跨存盘重启后快照丢失，
+        // 用刚追加的 Turn 条目的 interval 反推，与桌面 PushUndoTurn 语义一致）> 当前设置值
+        val effective = file.lastTurnInterval
+            ?: file.turns.lastOrNull()?.turnInterval?.let { TurnInterval(it.minutes, it.seconds) }
+            ?: interval
+        val minutes = effective.totalMinutes()
         val ptBefore = file.time.currentPositionTime   // 回退前的位置时间
         val back = TimeUtil.advance(ptBefore, -minutes)
         file.time.currentPositionTime = back
@@ -113,5 +127,6 @@ object TurnState {
         file.turns.removeAll { sameTime(it.turnTime, ptBefore) }
         file.undoSnapshot = null
         file.undoObjects = null
+        file.lastTurnInterval = null
     }
 }

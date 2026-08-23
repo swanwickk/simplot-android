@@ -4,8 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -46,14 +49,18 @@ fun ManualMoveSheet(
     onDismiss: () -> kotlin.Unit
 ) {
     // 打开时快照：取消时整体回滚（与 UnitEditSheet 取消语义一致）
-    val initialSnapshot = remember { MovementEngine.snapshotOf(unit) }
+    // #17 修复：remember 加 unit.idNum key，弹层复用/切换单位时防止旧快照串入
+    val initialSnapshot = remember(unit.idNum) { MovementEngine.snapshotOf(unit) }
     // UndoMove 栈：每步 DoMove 前压栈
-    val undoStack = remember { mutableListOf<MovementEngine.ManualMoveSnapshot>() }
+    val undoStack = remember(unit.idNum) { mutableListOf<MovementEngine.ManualMoveSnapshot>() }
 
     var minutesText by remember { mutableStateOf("5") }
     var gear by remember { mutableStateOf(1.0) }
     var paused by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf("") }
+    // #21 修复：DoMove 轨迹点时间戳随步数推进（累计移动分钟），避免多次 DoMove 的
+    // 起点轨迹点时间戳全部相同（每次 = 当前推算时间，逐步递增）
+    var moveTime by remember(unit.idNum) { mutableStateOf(currentTime) }
 
     fun refreshPositions() {
         msg = "当前位置 X=${unit.x} Y=${unit.y}（Range=${unit.range}）"
@@ -64,12 +71,14 @@ fun ManualMoveSheet(
         val mins = minutesText.toDoubleOrNull()
         if (mins == null || mins <= 0) { msg = "请输入有效的移动分钟数"; return }
         undoStack.add(MovementEngine.snapshotOf(unit))
-        val moved = MovementEngine.manualMoveStep(unit, mins, gear, currentTime)
+        val moved = MovementEngine.manualMoveStep(unit, mins, gear, moveTime)
         if (!moved) {
             undoStack.removeLast()
             msg = "无法移动：航速为 0 或航程已耗尽"
             return
         }
+        // #21：每次成功 DoMove 推进轨迹时间戳（桌面手动移动按分钟推进时间语义）
+        moveTime = com.simplot.android.data.util.TimeUtil.advance(moveTime, mins)
         msg = "已移动 ${formatGear(gear)} 档 × $mins 分钟 → X=${unit.x} Y=${unit.y}"
     }
 
@@ -88,7 +97,10 @@ fun ManualMoveSheet(
         },
         title = { Text("手动移动 — ${unit.name.ifEmpty { unit.idNum }}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
+            ) {
                 Text(
                     "当前航向 ${formatNum(unit.courseDeg())}° · 航速 ${formatNum(unit.speedKnots())} 节 · " +
                         "Range ${if (unit.range == MovementEngine.RANGE_UNLIMITED) "∞" else unit.range} 海里",

@@ -18,6 +18,7 @@ import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import com.google.gson.stream.JsonWriter
 import com.simplot.android.data.model.ScenarioFile
+import com.simplot.android.data.model.Unit
 import com.simplot.android.data.model.Waypoint
 import java.lang.reflect.Type
 
@@ -115,14 +116,14 @@ object JsonUtil {
                             reader.beginObject()
                             while (reader.hasNext()) reader.skipValue()
                             reader.endObject()
-                            emptyList<Any?>() as T
+                            mutableListOf<Any?>() as T
                         }
                         isMap && reader.peek() == JsonToken.BEGIN_ARRAY -> {
                             // 期望 Map 但遇到 []（旧存档空 Map）→ 空 Map
                             reader.beginArray()
                             while (reader.hasNext()) reader.skipValue()
                             reader.endArray()
-                            emptyMap<Any?, Any?>() as T
+                            mutableMapOf<Any?, Any?>() as T
                         }
                         else -> delegate.read(reader)
                     }
@@ -131,17 +132,25 @@ object JsonUtil {
         }
     }
 
+    // J1 风险收口：WaypointListAdapter 与 lenientFactory 同时注册，且 UnitAdapter 内部使用
+    // 独立 Gson（plainGsonForSerialize / gsonForDeserialize）避免递归绕过——JsonUtil.gson
+    // 为业务唯一入口，三者注册顺序：Waypoint → UnitAdapter → lenient（工厂放最后，避免
+    // 覆盖 UnitAdapter 的 delegate 查找）。WayPointListAdapter 与 lenient 均无业务副作用，
+    // UnitAdapter 自管航路点/宽容序列化，不依赖本实例递归。
     val gson: Gson = GsonBuilder()
         .disableHtmlEscaping()
         .registerTypeAdapter(object : TypeToken<MutableList<Waypoint>>() {}.type, WaypointListAdapter)
+        .registerTypeAdapter(Unit::class.java, UnitAdapter)
         .registerTypeAdapterFactory(lenientFactory)
         .create()
 
     /** 紧凑序列化（无空格，与桌面版字节级兼容） */
     fun toCompactJson(file: ScenarioFile): String = gson.toJson(file)
 
-    /** 解析明文 JSON 文本 → ScenarioFile */
-    fun fromJson(text: String): ScenarioFile = gson.fromJson(text, ScenarioFile::class.java)
+    /** 解析明文 JSON 文本 → ScenarioFile（R4：RangeMm 持久化键回填运行时镜像） */
+    fun fromJson(text: String): ScenarioFile = gson.fromJson(text, ScenarioFile::class.java).also { f ->
+        f.units.forEach { it.initRangeMmFromPersisted() }
+    }
 
     /** 校验是否为合法 SimPlot 存档 JSON */
     fun isScenarioJson(text: String): Boolean {

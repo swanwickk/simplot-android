@@ -1,7 +1,6 @@
 package com.simplot.android
 
 import android.content.ContentValues
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
@@ -10,6 +9,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -19,16 +19,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -62,7 +69,6 @@ import com.simplot.android.ui.components.NewUnitDialog
 import com.simplot.android.ui.components.NewScenarioDialog
 import com.simplot.android.ui.components.ReplayBar
 import com.simplot.android.ui.components.SceneCanvas
-import com.simplot.android.ui.components.SceneLibraryDialog
 import com.simplot.android.ui.components.SettingsDialog
 import com.simplot.android.ui.components.TurnControlBar
 import com.simplot.android.ui.components.UnitEditSheet
@@ -84,9 +90,17 @@ class MainActivity : ComponentActivity() {
     private val openFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm?.loadScenario(it) }
     }
+    // 打开场景文件夹（桌面版打开 Scenarios 文件夹语义）：授权整目录 → 同目录地图/背景图/玩家设置均可自动读取
+    private val openScenarioDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { vm?.loadScenarioFromDirectory(it) }
+    }
     // 保存（反馈⑱：每次弹出系统「保存为」对话框，可选路径和文件名；不再直接覆盖原文件）
     private val saveFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri?.let { vm?.saveThreeFilesTo(it) }
+    }
+    // 保存场景包（选择目录，自动生成 <场景名>.json + Blue.SpScn + Red.SpScn + player_settings.json）
+    private val saveScenarioDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { vm?.saveThreeFilesToDirectory(it) }
     }
     private val exportDir = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
@@ -129,49 +143,18 @@ class MainActivity : ComponentActivity() {
             vm?.rememberNewScenarioMapName(it)
         }
     }
-    // P3 场景库：选择场景目录（SAF tree）→ 持久化授权 + SharedPreferences 记忆 + 刷新场景库列表
-    private val sceneLibraryDirPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let {
-            try {
-                contentResolver.takePersistableUriPermission(
-                    it,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            } catch (e: SecurityException) {
-                // 个别 Provider 不支持持久授权：忽略，本次会话内仍可用
-            }
-            getSharedPreferences(PREFS_SCENE_LIBRARY, MODE_PRIVATE)
-                .edit().putString(PREF_SCENE_LIBRARY_DIR, it.toString()).apply()
-            sceneLibraryDir = it
-            vm?.toast("场景库目录已设置")
-        }
-    }
 
     // 供回调使用的 ViewModel 引用（onCreate 中赋值）
     private var vm: GameViewModel? = null
-
-    // P3 场景库：记住的目录（SharedPreferences 持久化，onCreate 恢复）+ 对话框开关
-    // 用 activity 级 mutableStateOf：回调（SAF 选择器返回）可直接更新，Compose 侧自动重组
-    private var sceneLibraryDir by mutableStateOf<Uri?>(null)
-    private var showSceneLibrary by mutableStateOf(false)
 
     // G06：导出运动命令的单位子集 + 玩家名暂存（导出对话框确认 → SAF 目录选择回调之间）
     private var pendingExportUnits: List<SimUnit>? = null
     private var pendingExportPlayerName: String = ""
 
-    companion object {
-        // P3 场景库：SharedPreferences 文件与键（目录 uri 持久化，跨启动记忆）
-        private const val PREFS_SCENE_LIBRARY = "simplot_scene_library"
-        private const val PREF_SCENE_LIBRARY_DIR = "scene_library_dir"
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 契约7：注入应用级 Context 供 UnitRenderer 懒加载 CWS 精灵图（assets/symbols/）
         com.simplot.android.render.UnitRenderer.init(applicationContext)
-        // P3 场景库：恢复上次记住的目录（takePersistableUriPermission 在授权时已完成，无需再校验）
-        sceneLibraryDir = getSharedPreferences(PREFS_SCENE_LIBRARY, MODE_PRIVATE)
-            .getString(PREF_SCENE_LIBRARY_DIR, null)?.let { Uri.parse(it) }
         setContent {
             SimPlotTheme {
                 val viewModel: GameViewModel = viewModel()
@@ -184,7 +167,7 @@ class MainActivity : ComponentActivity() {
     // ============ UI ============
 
     @Composable
-    private fun MainScreen(vm: GameViewModel) {
+    fun MainScreen(vm: GameViewModel) {
         // Toast 订阅（一次性消息）
         val toastMsg by vm.toasts.collectAsState()
         LaunchedEffect(toastMsg) {
@@ -194,20 +177,137 @@ class MainActivity : ComponentActivity() {
             }
         }
         // G06：导出运动命令单位选择对话框开关（桌面 WindowExportOrders；状态在 vm.showExportOrders）
-        // G15：手动移动弹层目标单位（桌面 ContainerMove；null=关闭）
-        var manualMoveUnit by remember { mutableStateOf<SimUnit?>(null) }
+        // G15 使用 vm.manualMoveUnit（顶部 EditMenu 入口，不遮挡地图）
 
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = { Text(vm.file?.scenario?.scenarioName ?: "SimPlot 安卓") },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    ),
-                    actions = { TextButtonRow(vm) }
-                )
+                // 横屏时 TopAppBar 紧凑化至 40dp（释放纵向 24dp+），竖屏保持 64dp 原样—— 不遮挡地图
+                val isLandscapeTop = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                if (isLandscapeTop) {
+                    LandscapeCompactTopBar(vm)
+                } else {
+                    TopAppBar(
+                        title = { Text(vm.file?.scenario?.scenarioName ?: "SimPlot 安卓", style = if (isLandscapeTop) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        modifier = if (isLandscapeTop) Modifier.height(40.dp) else Modifier,
+                        windowInsets = if (isLandscapeTop) androidx.compose.foundation.layout.WindowInsets(0.dp) else TopAppBarDefaults.windowInsets,
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ),
+                        actions = { TopActions(vm) }
+                    )
+                }
+            },
+            bottomBar = {
+                // 横屏：bottomBar 不占纵向空间（释放地图高度）；主操作收至右侧竖条
+                val landscapeBottom = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                if (!landscapeBottom && vm.file != null) {
+                    val replaying = vm.replayTimeline.isNotEmpty()
+                    @Suppress("UNUSED_VARIABLE") val turnTick = vm.revision   // FIX-TICK：订阅 revision，Do 后触发按钮区重组刷新 Undo/Next 可用态
+                    BottomActionBar(
+                        replaying = replaying,
+                        measureMode = vm.measureMode,
+                        turnState = vm.turnState,
+                        onDo = { vm.doTurn() },
+                        onUndo = { vm.undo() },
+                        onNext = { vm.next() },
+                        onMeasure = {
+                            if (vm.file == null) return@BottomActionBar
+                            if (vm.replayTimeline.isNotEmpty()) { vm.toast("回放中不可测量"); return@BottomActionBar }
+                            vm.measureMode = !vm.measureMode
+                            if (vm.measureMode) vm.toast("测量模式：拖动画线，轻点选中单位；退出即清除测量线") else {
+                                vm.selectedUnitId = null
+                                vm.clearMeasures()
+                            }
+                        },
+                        onReplay = { vm.toggleReplay() },
+                        file = vm.file
+                    )
+                }
             }
         ) { padding ->
+            val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            if (isLandscape && vm.file != null) {
+                // 横屏：Row 侧边布局 — 地图占满剩余宽高，操作竖条固定 96dp 不挤纵向
+                Row(Modifier.fillMaxSize().padding(padding)) {
+                    val f2 = vm.file!!
+                    val replaying2 = vm.replayTimeline.isNotEmpty()
+                    Box(Modifier.weight(1f).fillMaxSize()) {
+                        SceneCanvas(
+                            file = f2,
+                            camera = vm.camera,
+                            mapRenderer = vm.mapRenderer,
+                            selectedUnitId = vm.selectedUnitId,
+                            onSelect = { id ->
+                                vm.selectedUnitId = id
+                                if (id != null && vm.measureMode) { vm.measureMode = false; vm.clearMeasures() }
+                            },
+                            onRelocate = { id, x, y -> vm.relocate(id, x, y) },
+                            replayFrame = if (replaying2) vm.replayTimeline[vm.replayIndex] else null,
+                            tick = vm.revision,
+                            measureMode = vm.measureMode && !replaying2,
+                            onMeasureDone = { s, e -> vm.onMeasureComplete(s, e) },
+                            savedMeasures = vm.measureLog,
+                            unitDistances = if (!replaying2 && !vm.measureMode) vm.selectedUnitId?.let { id -> com.simplot.android.data.util.unitDistances(f2, id).filter { d -> vm.showSide.allows(d.side) } } else null,
+                            symbolStyle = vm.symbolStyle,
+                            settings = vm.settings,
+                            miscAnnotations = vm.miscAnnotations,
+                            showSide = vm.showSide,
+                            distanceUnit = vm.distanceUnit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    // 右侧紧凑竖条：固定宽度 96dp + 垂直滚动，不遮挡地图、不占纵向；U1：底部避让导航栏/手势条
+                    Surface(
+                        tonalElevation = 2.dp,
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.width(96.dp).fillMaxHeight()
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 8.dp).navigationBarsPadding(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            val replayingB = vm.replayTimeline.isNotEmpty()
+                            val btnMod = Modifier.fillMaxWidth()
+                            // 横屏取消选中入口（置顶，选中态常驻，不遮挡地图；点空白或按钮均可取消）
+                            vm.selectedUnitId?.let { selId ->
+                                val selUnitTop = f2.units.firstOrNull { it.idNum == selId }
+                                if (selUnitTop != null && !vm.measureMode && !replayingB) {
+                                    Button(onClick = { vm.selectedUnitId = null }, modifier = btnMod) { Text("✕ 取消选中", style = MaterialTheme.typography.labelSmall) }
+                                    Text(selUnitTop.name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+                                    TextButton(onClick = { vm.editUnit = selUnitTop }, modifier = btnMod) { Text("编辑", style = MaterialTheme.typography.labelSmall) }
+                                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                                }
+                            }
+                            if (replayingB) {
+                                Button(onClick = { vm.toggleReplay() }, modifier = btnMod) { Text("退出回放", style = MaterialTheme.typography.labelSmall) }
+                                Button(onClick = {
+                                    if (vm.file == null) return@Button
+                                    if (vm.replayTimeline.isNotEmpty()) { vm.toast("回放中不可测量"); return@Button }
+                                    vm.measureMode = !vm.measureMode
+                                    if (vm.measureMode) vm.toast("测量模式：拖动画线，轻点选中单位；退出即清除测量线") else { vm.selectedUnitId = null; vm.clearMeasures() }
+                                }, modifier = btnMod) { Text(if (vm.measureMode) "退出测量" else "测量", style = MaterialTheme.typography.labelSmall) }
+                            } else {
+                                // FIX-STATE：直接绑定 VM 可观察回合状态（Do/Undo/Next 成功即写入，重组必然刷新）
+                                val st2 = vm.turnState
+                                val canDo2 = com.simplot.android.engine.TurnState.canDo(st2)
+                                val canUndo2 = com.simplot.android.engine.TurnState.canUndo(st2)
+                                val canNext2 = com.simplot.android.engine.TurnState.canNext(st2)
+                                Button(onClick = { vm.doTurn() }, enabled = canDo2, modifier = btnMod) { Text("Do", style = MaterialTheme.typography.labelMedium) }
+                                Button(onClick = { vm.undo() }, enabled = canUndo2, modifier = btnMod) { Text("Undo", style = MaterialTheme.typography.labelMedium) }
+                                Button(onClick = { vm.next() }, enabled = canNext2, modifier = btnMod) { Text("Next", style = MaterialTheme.typography.labelMedium) }
+                                Button(onClick = {
+                                    if (vm.file == null) return@Button
+                                    if (vm.replayTimeline.isNotEmpty()) { vm.toast("回放中不可测量"); return@Button }
+                                    vm.measureMode = !vm.measureMode
+                                    if (vm.measureMode) vm.toast("测量模式：拖动画线，轻点选中单位；退出即清除测量线") else { vm.selectedUnitId = null; vm.clearMeasures() }
+                                }, modifier = btnMod) { Text(if (vm.measureMode) "退出测量" else "测量", style = MaterialTheme.typography.labelSmall) }
+                                Button(onClick = { vm.toggleReplay() }, modifier = btnMod) { Text("回放", style = MaterialTheme.typography.labelSmall) }
+                            }
+                        }
+                    }
+                }
+            } else {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 val f = vm.file
                 if (f != null) {
@@ -218,20 +318,10 @@ class MainActivity : ComponentActivity() {
                     val unitDist = if (!replaying && !vm.measureMode) vm.selectedUnitId?.let { id ->
                         unitDistances(f, id).filter { d -> vm.showSide.allows(d.side) }
                     } else null
-                    // 契约7：选中单位 → 显性操作条（编辑入口显性化；测量/回放中不显示，长按编辑路径保留）
-                    val selUnit = vm.selectedUnitId?.let { id -> f.units.firstOrNull { it.idNum == id } }
-                    if (selUnit != null && !vm.measureMode && !replaying) {
-                        SelectedUnitBar(
-                            unit = selUnit,
-                            onEdit = { vm.editUnit = selUnit },
-                            onWaypoints = { vm.editWaypointsUnit = selUnit },
-                            onArcs = { vm.editArcUnit = selUnit },
-                            // G29：Paste 入口（粘贴剪贴板单位到视野中心；剪贴板为空时 toast 提示）
-                            onPaste = { vm.pasteUnit(vm.camera.centerWorldX, vm.camera.centerWorldY) },
-                            // G15：手动移动入口（桌面版 ContainerMove DoMove/Pause/UndoMove）
-                            onManualMove = { manualMoveUnit = selUnit },
-                            onClear = { vm.selectedUnitId = null }
-                        )
+                    // 取消选中：点空白（SceneCanvas hitTest 未命中 -> onSelect(null)）、下方选中条按钮、编辑溢出菜单均可；不做覆盖地图的弹窗/悬浮
+                    // 返回键：有选中则取消选中（不退出页面），无选中走系统默认
+                    if (vm.selectedUnitId != null) {
+                        BackHandler { vm.selectedUnitId = null }
                     }
                     SceneCanvas(
                         file = f,
@@ -240,14 +330,11 @@ class MainActivity : ComponentActivity() {
                         selectedUnitId = vm.selectedUnitId,
                         onSelect = { id ->
                             vm.selectedUnitId = id
-                            // 修复 A：轻点选中单位即退出测量模式（用户可直接看 ② 辅助线）；轻点空白不退出
-                            // 修复 B：退出（无论按钮还是选中）即清除测量线，语义一致
                             if (id != null && vm.measureMode) {
                                 vm.measureMode = false
                                 vm.clearMeasures()
                             }
                         },
-                        // G32：长按拖拽 Relocate（长按不再弹编辑窗；编辑入口在选中操作条）
                         onRelocate = { id, x, y -> vm.relocate(id, x, y) },
                         replayFrame = if (replaying) vm.replayTimeline[vm.replayIndex] else null,
                         tick = vm.revision,
@@ -259,6 +346,7 @@ class MainActivity : ComponentActivity() {
                         settings = vm.settings,
                         miscAnnotations = vm.miscAnnotations,
                         showSide = vm.showSide,
+                        distanceUnit = vm.distanceUnit,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
                     if (replaying) {
@@ -278,20 +366,47 @@ class MainActivity : ComponentActivity() {
                             onSpeedChange = { vm.setReplaySpeed(it) }
                         )
                     } else {
-                        TurnControlBar(
-                            file = f,
-                            onDo = { vm.doTurn() },
-                            onUndo = { vm.undo() },
-                            onNext = { vm.next() },
-                            tick = vm.revision,
-                            onIntervalSet = { m, s -> vm.toast("回合时长已设为 $m 分 $s 秒") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        // 竖屏：控局条可收起（不挤地图，选中条在画布下方）
+                        var showTurnPanel by remember { mutableStateOf(false) }
+                        TextButton(onClick = { showTurnPanel = !showTurnPanel }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (showTurnPanel) "收起控局条 ▲" else "展开控局条 ▼ · ${f.time.currentTurnTime} → ${f.time.currentPositionTime}")
+                        }
+                        if (showTurnPanel) {
+                            TurnControlBar(
+                                file = f,
+                                onDo = { vm.doTurn() },
+                                onUndo = { vm.undo() },
+                                onNext = { vm.next() },
+                                tick = vm.revision,
+                                vmTurnState = vm.turnState,
+                                onIntervalSet = { m, s -> vm.toast("回合时长已设为 $m 分 $s 秒") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                    // 竖屏已选中轻量条（不遮挡地图，置于画布与底部栏之间）：保留取消入口（编辑+取消；非弹窗/悬浮覆盖，下方条状出现）
+                    if (!replaying && !vm.measureMode) vm.selectedUnitId?.let { selId ->
+                        val selUnit = f.units.firstOrNull { it.idNum == selId }
+                        if (selUnit != null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("${selUnit.name}（${selUnit.unitType}）", style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { vm.editUnit = selUnit }) { Text("编辑") }
+                                TextButton(onClick = { vm.selectedUnitId = null }) { Text("✕ 取消选中") }
+                            }
+                        }
                     }
                 } else {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("请点击左上角「打开」选择场景存档", style = MaterialTheme.typography.bodyLarge)
-                    }
+                    // P0-4：居家空状态卡（超大触控入口，3 秒内可开局）
+                    com.simplot.android.ui.components.HomeEmptyState(
+                        onNewScenario = { vm.showNewScenario = true },
+                        onOpenFile = { openFile.launch(arrayOf("application/json", "application/octet-stream", "*/*")) },
+                        onOpenFolder = { openScenarioDir.launch(null) },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
@@ -325,13 +440,13 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // G15：手动移动控制弹层（桌面版 ContainerMove DoMove/Pause/UndoMove + 速度档位）
-        manualMoveUnit?.let { unit ->
+        // G15：手动移动控制（vm.manualMoveUnit，EditMenu 入口）
+        vm.manualMoveUnit?.let { unit ->
             ManualMoveSheet(
                 unit = unit,
                 currentTime = vm.file?.time?.currentPositionTime ?: "",
-                onApply = { vm.applyEdit(it); manualMoveUnit = null },
-                onDismiss = { manualMoveUnit = null }
+                onApply = { vm.applyEdit(it); vm.manualMoveUnit = null },
+                onDismiss = { vm.manualMoveUnit = null }
             )
         }
 
@@ -411,27 +526,13 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // P3 场景库（应用内场景列表/管理：记住目录 + 列表打开 + 删除）
-        if (showSceneLibrary) {
-            SceneLibraryDialog(
-                dirUri = sceneLibraryDir,
-                onChangeDir = { sceneLibraryDirPicker.launch(null) },
-                onOpen = { uri ->
-                    showSceneLibrary = false
-                    vm.loadScenario(uri)
-                },
-                onToast = { vm.toast(it) },
-                onDismiss = { showSceneLibrary = false }
-            )
-        }
-
         // G01：新场景创建（桌面版 WindowNewScenario：场景名 + 起始日期时间 + 地图选择）
         if (vm.showNewScenario) {
             NewScenarioDialog(
                 defaultStartTime = vm.defaultScenarioStartTime(),
                 mapFileName = vm.newScenarioMapName,
                 onDismiss = { vm.showNewScenario = false; vm.newScenarioMapName = null },
-                onPickMap = { pickNewScenarioMap.launch(arrayOf("application/json", "*/*")) },
+                onPickMap = { pickNewScenarioMap.launch(arrayOf("application/json", "text/plain", "image/*", "*/*")) },
                 onClearMap = { vm.newScenarioMapName = null },
                 onCreate = { name, startTime, mapName ->
                     vm.createNewScenario(name, startTime, mapName)
@@ -479,119 +580,18 @@ class MainActivity : ComponentActivity() {
 
         // 新位置计算器已删除（反馈⑩：功能整体移除，原顶部按钮与编辑菜单入口一并去掉）
     }
-
-    @Composable
-    private fun androidx.compose.foundation.layout.RowScope.TextButtonRow(vm: GameViewModel) {
-        // 顶部按钮：新场景 / 打开 / 保存 / 地图 / 测量 / CWS-NTDS / 导出CSV / 导出 / 回放（契约7：去掉示例；反馈⑩：新位置、护航队功能已整体移除）
-        // G01：新场景创建入口（桌面版 File → New Scenario；无需先打开场景，可从零开始）
-        Button(onClick = { vm.showNewScenario = true }) { Text("新场景") }
-        Button(onClick = { openFile.launch(arrayOf("application/json", "application/octet-stream", "*/*")) }) {
-            Text("打开")
-        }
-        // P3 场景库：应用内场景列表（记住目录，点选即开，可删除）
-        Button(onClick = { showSceneLibrary = true }) { Text("场景库") }
-        Button(onClick = {
-            // 反馈⑱：每次保存都弹系统「保存为」对话框（选路径+文件名）
-            if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
-            val defaultName = vm.file?.scenario?.scenarioName?.ifBlank { "scenario" } ?: "scenario"
-            saveFile.launch("$defaultName.json")
-        }) { Text("保存") }
-        Button(onClick = { pickMap.launch(arrayOf("image/*")) }) { Text("地图") }
-        // P2 恢复：新建单位 / 护航队 / 编队
-        Button(onClick = { if (vm.file != null) vm.showNewUnit = true else vm.toast("请先打开一个场景") }) { Text("新单位") }
-        Button(onClick = { if (vm.file != null) vm.showConvoy = true else vm.toast("请先打开一个场景") }) { Text("护航队") }
-        Button(onClick = { if (vm.file != null) vm.showFormation = true else vm.toast("请先打开一个场景") }) { Text("编队") }
-        Button(onClick = {
-            if (vm.file == null) return@Button
-            if (vm.replayTimeline.isNotEmpty()) { vm.toast("回放中不可测量"); return@Button }
-            vm.measureMode = !vm.measureMode
-            if (vm.measureMode) vm.toast("测量模式：拖动画线，轻点选中单位；退出即清除测量线") else {
-                vm.selectedUnitId = null
-                vm.clearMeasures()  // 修复 B：退出测量模式清除全部测量线
-            }
-        }) { Text(if (vm.measureMode) "退出测量" else "测量") }
-        Button(onClick = { vm.toggleSymbolStyle() }) { Text("符号:${if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "NTDS" else if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.CWS) "CWS" else "WW2"}") }
-        // G30：Show Side 视图过滤三态（桌面 Show Side 菜单 All/Blue/Red；仅影响视图，不落盘）
-        Button(onClick = { vm.cycleShowSide() }) { Text("视图:${com.simplot.android.ui.showSideLabel(vm.showSide)}") }
-        // R4：玩家显示设置（桌面版 WindowCustomizeDisplay）
-        Button(onClick = { vm.showSettings = true }) { Text("设置") }
-        // 导出CSV 菜单：相对位置（N1 新增，桌面版 ExportData.RelativeUnitPositions）/ 测量（原行为）
-        Box {
-            var exportMenuOpen by remember { mutableStateOf(false) }
-            Button(onClick = { exportMenuOpen = true }) { Text("导出CSV") }
-            DropdownMenu(expanded = exportMenuOpen, onDismissRequest = { exportMenuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("相对位置") },
-                    onClick = {
-                        exportMenuOpen = false
-                        if (vm.file?.units?.isEmpty() != false) { vm.toast("场景无单位，请先打开场景"); return@DropdownMenuItem }
-                        exportCsvRelativeDir.launch(null)
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("测量") },
-                    onClick = {
-                        exportMenuOpen = false
-                        if (vm.measureLog.isEmpty()) { vm.toast("无测量记录，先测量再导出"); return@DropdownMenuItem }
-                        exportCsvDir.launch(null)
-                    }
-                )
-            }
-        }
-        // G06：导出运动命令——先弹单位选择对话框（桌面 WindowExportOrders），确认后选目录
-        Button(onClick = {
-            if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可导出"); return@Button }
-            vm.showExportOrders = true
-        }) { Text("导出") }
-        Button(onClick = {
-            if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
-            importOrders.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
-        }) { Text("导入") }
-        // G28：单位级导入导出（桌面 Units → Import Unit / Export Unit；导出需先选中单位）
-        Box {
-            var unitMenuOpen by remember { mutableStateOf(false) }
-            Button(onClick = { unitMenuOpen = true }) { Text("单位") }
-            DropdownMenu(expanded = unitMenuOpen, onDismissRequest = { unitMenuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("导出单位") },
-                    onClick = {
-                        unitMenuOpen = false
-                        if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }
-                        if (vm.selectedUnitId == null) { vm.toast("请先选中要导出的单位"); return@DropdownMenuItem }
-                        exportUnitDir.launch(null)
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("导入单位") },
-                    onClick = {
-                        unitMenuOpen = false
-                        if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }
-                        importUnitFile.launch(arrayOf("application/json", "*/*"))
-                    }
-                )
-            }
-        }
-        Button(onClick = {
-            if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
-            val defaultName = vm.file?.scenario?.scenarioName?.ifBlank { "setup" } ?: "setup"
-            saveSetupFile.launch("$defaultName.json")
-        }) { Text("Setup") }
-        // G25：显式保存玩家设置到场景目录（桌面 File → Save Player Settings）
-        Button(onClick = { vm.savePlayerSettingsToScenarioDir() }) { Text("存设置") }
-        // G27：地图截图导出 PNG（桌面 File → Save Map Screenshot；View.draw → MediaStore 相册）
-        Button(onClick = {
-            if (vm.file == null) { vm.toast("请先打开一个场景"); return@Button }
-            val bmp = captureScreenshot()
-            if (bmp == null) { vm.toast("截图失败：画布不可用"); return@Button }
-            saveScreenshotToGallery(bmp)
-        }) { Text("截图") }
-        Button(onClick = { vm.toggleReplay() }) { Text(if (vm.replayTimeline.isNotEmpty()) "退出回放" else "回放") }
     }
+
+    // TextButtonRow 已废弃：旧顶部横滚按钮堆已由 TopActions(场景/编辑/视图/更多) 溢出菜单替代（不遮挡地图）
+    // 保留空桩避免历史分支合入编译失败；禁止恢复横滚 Button（会遮挡/挤压地图）
+    @Composable
+    @Suppress("UNUSED_PARAMETER")
+    private fun androidx.compose.foundation.layout.RowScope.TextButtonRow(vm: GameViewModel) { }
 
     // ============ G27 地图截图（桌面 File → Save Map Screenshot） ============
 
     /** 将当前窗口内容绘制到 Bitmap（View.draw：兼容 Compose 视图树，无需 Surface 权限） */
-    private fun captureScreenshot(): Bitmap? {
+    fun captureScreenshot(): Bitmap? {
         val view = window.decorView.rootView
         if (view.width <= 0 || view.height <= 0) return null
         val bmp = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
@@ -601,7 +601,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /** 保存 PNG 到系统相册（MediaStore；API 29+ 免权限，低版本尝试旧接口并容错提示） */
-    private fun saveScreenshotToGallery(bmp: Bitmap) {
+    fun saveScreenshotToGallery(bmp: Bitmap) {
         val stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
         val name = "SimPlot_$stamp.png"
         try {
@@ -619,8 +619,6 @@ class MainActivity : ComponentActivity() {
                 }
             } else {
                 // API 26-28：旧接口写入相册（部分设备需存储权限，失败走提示）
-                // 注：insertImage 自 API 29 起弃用，此分支为低版本兼容路径，有意保留，仅压制告警
-                @Suppress("DEPRECATION")
                 val inserted = MediaStore.Images.Media.insertImage(contentResolver, bmp, name, "SimPlot 地图截图")
                 if (inserted != null) {
                     vm?.toast("截图已保存：$name")
@@ -633,43 +631,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 选中单位操作条（契约7：需求2 编辑入口显性化）：单位名+类型 + 编辑 + 航路点 + 弧 + 移动 + Paste + 取消选中 */
-    @Composable
-    private fun SelectedUnitBar(
-        unit: SimUnit,
-        onEdit: () -> Unit,
-        onWaypoints: () -> Unit,
-        onArcs: () -> Unit,
-        onPaste: () -> Unit,
-        onManualMove: () -> Unit,
-        onClear: () -> Unit
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.secondaryContainer
-        ) {
-            Row(
-                Modifier.padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "${unit.name}（${unit.unitType}）",
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = onEdit) { Text("编辑") }
-                TextButton(onClick = onWaypoints) { Text("航路点") }
-                TextButton(onClick = onArcs) { Text("弧") }
-                // G15：手动移动（桌面版 ContainerMove：DoMove/Pause/UndoMove/速度档位）
-                TextButton(onClick = onManualMove) { Text("移动") }
-                // G29：Paste（粘贴剪贴板单位到视野中心；无选中单位时操作条不显示，剪贴板内单位仍可经编辑窗复制）
-                TextButton(onClick = onPaste) { Text("Paste") }
-                TextButton(onClick = onClear) { Text("取消选中") }
-            }
-        }
-    }
+    // SelectedUnitBar 已移除（不遮挡地图）：取消选中靠 SceneCanvas 空白点 hitTest 未命中 -> onSelect(null)、
+    // 竖屏画布下方轻量条、横屏右侧竖条顶端按钮、编辑溢出菜单、返回键（BackHandler）；禁止覆盖地图的弹窗/悬浮浮层
 
     /**
      * G06：导出运动命令单位选择对话框（桌面 WindowExportOrders）。
@@ -677,7 +640,7 @@ class MainActivity : ComponentActivity() {
      * 玩家名参与文件名（Movement - <玩家名>.json）。确认后由调用方发起目录选择。
      */
     @Composable
-    private fun ExportOrdersDialog(
+    fun ExportOrdersDialog(
         units: List<SimUnit>,
         initialPlayerName: String,
         onDismiss: () -> Unit,
@@ -692,7 +655,9 @@ class MainActivity : ComponentActivity() {
             onDismissRequest = onDismiss,
             title = { Text("导出运动命令（选择单位）") },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
+                ) {
                     OutlinedTextField(
                         value = playerName,
                         onValueChange = { playerName = it },
@@ -761,5 +726,220 @@ class MainActivity : ComponentActivity() {
             confirmButton = { Button(onClick = { onExport(selected.toList(), playerName) }) { Text("导出") } },
             dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
         )
+    }
+
+    // ============ P0 居家友好：分组溢出菜单 + 底部主操作（拇指可达） ===========
+
+    @Composable
+    private fun TopActions(vm: GameViewModel) {
+        // 顶部只留 4 个分组溢出，避免 15+ 文本 Button 横向硬滚
+        SceneMenu(vm)
+        EditMenu(vm)
+        ViewMenu(vm)
+        MoreMenu(vm)
+    }
+
+    @Composable
+    private fun SceneMenu(vm: GameViewModel) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            TextButton(onClick = { open = true }) { Text("场景") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                DropdownMenuItem(text = { Text("新建场景") }, onClick = { open = false; vm.showNewScenario = true })
+                DropdownMenuItem(text = { Text("打开文件") }, onClick = { open = false; openFile.launch(arrayOf("application/json", "application/octet-stream", "*/*")) })
+                DropdownMenuItem(text = { Text("打开文件夹") }, onClick = { open = false; openScenarioDir.launch(null) })
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("保存场景包(选目录)") }, onClick = { open = false; if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }; saveScenarioDir.launch(null) })
+                DropdownMenuItem(text = { Text("保存单文件JSON") }, onClick = {
+                    open = false; if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }
+                    val n = vm.file?.scenario?.scenarioName?.ifBlank { "scenario" } ?: "scenario"; saveFile.launch("$n.json")
+                })
+                DropdownMenuItem(text = { Text("导入运动命令") }, onClick = { open = false; if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }; importOrders.launch(arrayOf("application/json", "application/octet-stream", "*/*")) })
+                DropdownMenuItem(text = { Text("保存 Setup") }, onClick = {
+                    open = false; if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }
+                    val n = vm.file?.scenario?.scenarioName?.ifBlank { "setup" } ?: "setup"; saveSetupFile.launch("$n.json")
+                })
+                DropdownMenuItem(text = { Text("存设置到场景目录") }, onClick = { open = false; vm.savePlayerSettingsToScenarioDir() })
+                DropdownMenuItem(
+                    text = { Text("地图") },
+                    onClick = { open = false; pickMap.launch(arrayOf("application/json", "text/plain", "image/*", "*/*")) }
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun EditMenu(vm: GameViewModel) {
+        var open by remember { mutableStateOf(false) }
+        val sel = vm.selectedUnitId?.let { id -> vm.file?.units?.firstOrNull { it.idNum == id } }
+        val hasSel = sel != null
+        Box {
+            TextButton(onClick = { open = true }) { Text("编辑") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                DropdownMenuItem(text = { Text("新单位") }, onClick = { open = false; if (vm.file != null) vm.showNewUnit = true else vm.toast("请先打开一个场景") })
+                DropdownMenuItem(text = { Text("护航队") }, onClick = { open = false; if (vm.file != null) vm.showConvoy = true else vm.toast("请先打开一个场景") })
+                DropdownMenuItem(text = { Text("编队") }, onClick = { open = false; if (vm.file != null) vm.showFormation = true else vm.toast("请先打开一个场景") })
+                HorizontalDivider()
+                // 选中单位编辑入口（不遮挡地图：收至溢出菜单；未选中时禁用）
+                DropdownMenuItem(
+                    text = { Text(if (hasSel) "编辑单位：${sel!!.name}" else "编辑单位（请先选点单位）") },
+                    onClick = { open = false; if (sel != null) vm.editUnit = sel else vm.toast("请先轻点选中一个单位") }
+                )
+                DropdownMenuItem(
+                    text = { Text("航路点") },
+                    enabled = hasSel,
+                    onClick = { open = false; if (sel != null) vm.editWaypointsUnit = sel else vm.toast("请先轻点选中一个单位") }
+                )
+                DropdownMenuItem(
+                    text = { Text("传感器/武器弧") },
+                    enabled = hasSel,
+                    onClick = { open = false; if (sel != null) vm.editArcUnit = sel else vm.toast("请先轻点选中一个单位") }
+                )
+                DropdownMenuItem(
+                    text = { Text("手动移动") },
+                    enabled = hasSel,
+                    onClick = {
+                        open = false
+                        if (sel == null) { vm.toast("请先轻点选中一个单位"); return@DropdownMenuItem }
+                        vm.manualMoveUnit = sel
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("粘贴（中心）") },
+                    onClick = {
+                        open = false
+                        if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }
+                        vm.pasteUnit(vm.camera.centerWorldX, vm.camera.centerWorldY)
+                    }
+                )
+                if (hasSel) {
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("✕ 取消选中：${sel!!.name}") },
+                        onClick = { open = false; vm.selectedUnitId = null }
+                    )
+                }
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("导出单位") }, onClick = {
+                    open = false; if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }
+                    if (vm.selectedUnitId == null) { vm.toast("请先选中要导出的单位"); return@DropdownMenuItem }; exportUnitDir.launch(null)
+                })
+                DropdownMenuItem(text = { Text("导入单位") }, onClick = { open = false; if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }; importUnitFile.launch(arrayOf("application/json", "*/*")) })
+            }
+        }
+    }
+
+    @Composable
+    private fun ViewMenu(vm: GameViewModel) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            TextButton(onClick = { open = true }) { Text("视图") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                DropdownMenuItem(text = { Text("单位:${vm.distanceUnit.code}") }, onClick = { vm.cycleDistanceUnit() })
+                DropdownMenuItem(text = { Text("视图:${com.simplot.android.ui.showSideLabel(vm.showSide)}") }, onClick = { vm.cycleShowSide() })
+                DropdownMenuItem(text = { Text("符号:${if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "NTDS" else if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.CWS) "CWS" else "WW2"}") }, onClick = { vm.toggleSymbolStyle() })
+                HorizontalDivider()
+                // 弧显示三态（传感器/武器/声呐被动方位）
+                DropdownMenuItem(text = { Text("${if (vm.settings.showSensors) "✓ " else "  "}传感器弧") }, onClick = { vm.toggleSetting { it.copy(showSensors = !it.showSensors) } })
+                DropdownMenuItem(text = { Text("${if (vm.settings.showWeapons) "✓ " else "  "}武器弧") }, onClick = { vm.toggleSetting { it.copy(showWeapons = !it.showWeapons) } })
+                DropdownMenuItem(text = { Text("${if (vm.settings.showSonar && vm.settings.showEs) "✓ " else "  "}声呐/被动方位") }, onClick = {
+                    val next = !(vm.settings.showSonar && vm.settings.showEs); vm.toggleSetting { it.copy(showSonar = next, showEs = next) }
+                })
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("设置…") }, onClick = { open = false; vm.showSettings = true })
+            }
+        }
+    }
+
+    @Composable
+    private fun MoreMenu(vm: GameViewModel) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            TextButton(onClick = { open = true }) { Text("更多") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                DropdownMenuItem(text = { Text("导出CSV · 相对位置") }, onClick = {
+                    open = false; if (vm.file?.units?.isEmpty() != false) { vm.toast("场景无单位，请先打开场景"); return@DropdownMenuItem }; exportCsvRelativeDir.launch(null)
+                })
+                DropdownMenuItem(text = { Text("导出CSV · 测量") }, onClick = {
+                    open = false; if (vm.measureLog.isEmpty()) { vm.toast("无测量记录，先测量再导出"); return@DropdownMenuItem }; exportCsvDir.launch(null)
+                })
+                DropdownMenuItem(text = { Text("导出运动命令") }, onClick = {
+                    open = false; if (vm.file?.units?.isEmpty() != false) { vm.toast("无单位可导出"); return@DropdownMenuItem }; vm.showExportOrders = true
+                })
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("截图（保存到相册）") }, onClick = {
+                    open = false; if (vm.file == null) { vm.toast("请先打开一个场景"); return@DropdownMenuItem }
+                    val bmp = captureScreenshot(); if (bmp == null) { vm.toast("截图失败：画布不可用"); return@DropdownMenuItem }; saveScreenshotToGallery(bmp)
+                })
+            }
+        }
+    }
+
+    @Composable
+    private fun LandscapeCompactTopBar(vm: GameViewModel) {
+        // 横屏专用 40dp 紧凑顶栏（M3 TopAppBar 默认 64dp → 压至 40dp，释放 ~24dp 地图纵向）
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.fillMaxWidth().height(40.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = vm.file?.scenario?.scenarioName ?: "SimPlot 安卓",
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.padding(start = 6.dp)
+                ) { TopActions(vm) }
+            }
+        }
+    }
+
+    @Composable
+    private fun BottomActionBar(
+        replaying: Boolean,
+        measureMode: Boolean,
+        onDo: () -> Unit,
+        onUndo: () -> Unit,
+        onNext: () -> Unit,
+        onMeasure: () -> Unit,
+        onReplay: () -> Unit,
+        file: com.simplot.android.data.model.ScenarioFile? = null,
+        turnState: com.simplot.android.engine.TurnState.State? = null   // FIX-STATE：直接绑定 VM 可观察状态
+    ) {
+        val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val state = turnState ?: file?.let { com.simplot.android.engine.TurnState.detect(it) }
+        val canDo = state?.let { com.simplot.android.engine.TurnState.canDo(it) } ?: (file != null)
+        val canUndo = state?.let { com.simplot.android.engine.TurnState.canUndo(it) } ?: false
+        val canNext = state?.let { com.simplot.android.engine.TurnState.canNext(it) } ?: false
+        Surface(
+            tonalElevation = if (landscape) 3.dp else 6.dp,
+            shadowElevation = if (landscape) 4.dp else 8.dp,
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (replaying) {
+                    Button(onClick = onReplay, modifier = Modifier.weight(1f)) { Text("退出回放") }
+                    Button(onClick = onMeasure, modifier = Modifier.weight(1f)) { Text(if (measureMode) "退出测量" else "测量") }
+                } else {
+                    Button(onClick = onDo, enabled = canDo, modifier = Modifier.weight(1f)) { Text("▶ Do") }
+                    Button(onClick = onUndo, enabled = canUndo, modifier = Modifier.weight(1f)) { Text("↩ Undo") }
+                    Button(onClick = onNext, enabled = canNext, modifier = Modifier.weight(1f)) { Text("✓ Next") }
+                    Button(onClick = onMeasure, modifier = Modifier.weight(1f)) { Text(if (measureMode) "退出测量" else "测量") }
+                    Button(onClick = onReplay, modifier = Modifier.weight(1f)) { Text("回放") }
+                }
+            }
+        }
     }
 }

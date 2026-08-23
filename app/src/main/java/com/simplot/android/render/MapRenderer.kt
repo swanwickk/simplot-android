@@ -66,17 +66,48 @@ class MapRenderer {
         set(v) { parser.pendingBackgroundName = v }
 
     fun loadMapImage(contentResolver: ContentResolver, uri: Uri) {
-        bitmap = BitmapFactory.decodeStream(contentResolver.openInputStream(uri))
+        try {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                bitmap = BitmapFactory.decodeStream(stream)
+                onRasterImageLoaded()
+            }
+        } catch (e: Exception) {
+            // 图片解码失败不阻塞
+        }
+    }
+
+    fun loadMapImage(inputStream: java.io.InputStream) {
+        try {
+            bitmap = BitmapFactory.decodeStream(inputStream)
+            onRasterImageLoaded()
+        } catch (e: Exception) {
+            // 图片解码失败不阻塞
+        }
+    }
+
+    /** 光栅底图加载后：把 CITY/COUNTRY 原始像素换算为「以图片中心为原点」的世界坐标 */
+    private fun onRasterImageLoaded() {
+        val bmp = bitmap ?: return
+        if (!parser.hasBoundary && parser.mapScale > 0.0) {
+            parser.applyRasterCenter(bmp.width, bmp.height)
+        }
+    }
+
+    fun clearMap() {
+        parser.clear()
+        bitmap = null
+        mapScaleMetersPerPx = 0.0
     }
 
     /** 解析官方 JSON 地图配置（委托 MapDataParser） */
     fun parseMapConfigJson(text: String) {
+        bitmap = null
         parser.parse(text)
-        // 旧字段兼容（米/像素 → 由 BoundaryRect 反推）
-        if (parser.hasBoundary) {
-            val metersPerWorldUnit = 1852.0 / 100000.0
-            mapScaleMetersPerPx = metersPerWorldUnit * 10 * (parser.boundaryWidth / (parser.boundaryWidth.toDouble()))
-        }
+        // #7（G65）修复：删除 v0.6.0 遗留的残废公式
+        //   mapScaleMetersPerPx = metersPerWorldUnit * 10 * (boundaryWidth / boundaryWidth.toDouble())
+        //   其中 boundaryWidth/自身 恒为 1，该赋值恒产出 0.1852 且无意义——
+        //   JSON 边界地图由 drawBitmap 的 hasBoundary 分支按 BoundaryRect 直接定位并提前 return，
+        //   mapScaleMetersPerPx 仅用于旧 txt 格式（parseMapConfig），JSON 分支写它纯属死代码。
     }
 
     /** 兼容旧 txt 配置：MAP=xxx.png  SCALE=3.071(km/px) */
@@ -84,6 +115,16 @@ class MapRenderer {
         val map = Regex("MAP=(.+)").find(text)?.groupValues?.get(1)?.trim()
         val scale = Regex("SCALE=([\\d.]+)").find(text)?.groupValues?.get(1)?.toDoubleOrNull()
         if (scale != null) mapScaleMetersPerPx = scale * 1000.0
+    }
+
+    /**
+     * 光栅地图定位：解析 SCALE（像素/海里）后，计算并写入底图比例尺。
+     * 桌面语义：底图世界宽 = 图宽像素 ÷ SCALE（海里）× 100000。
+     * drawBitmap 非边界分支 worldPerPx = mapScaleMetersPerPx / 1852 × 100000，
+     * 令其 = 100000/SCALE → mapScaleMetersPerPx = 1852/SCALE（米/像素）。
+     */
+    fun applyRasterScale(scale: Double) {
+        if (scale > 0.0) mapScaleMetersPerPx = 1852.0 / scale
     }
 
     /**
@@ -127,7 +168,7 @@ class MapRenderer {
         }
     }
 
-    /** 若已加载地图位图且配置比例尺，绘制贴图（官方 JSON：按 BoundaryRect 定位） */
+    /** 若已加载地图位图且配置比例尺，绘制贴图（官方 JSON：按 BoundaryRect 定位；光栅：中心锚定世界原点） */
     fun drawBitmap(canvas: Canvas, camera: Camera, canvasW: Int, canvasH: Int) {
         val bmp = bitmap ?: return
         val p = parser
@@ -151,8 +192,11 @@ class MapRenderer {
         val worldPerPx = mapScaleMetersPerPx / metersPerWorldUnit * 100000.0
         val mapWorldW = bmp.width * worldPerPx
         val mapWorldH = bmp.height * worldPerPx
-        // 翻转后北边（大 Y）在屏幕上方：取北边（minY + H）作左上角，与 boundary 分支一致
-        val (sx0, sy0) = camera.worldToScreen(p.mapWorldMinX, p.mapWorldMinY + mapWorldH.toLong(), canvasW, canvasH)
+        // 光栅底图：图片中心 = 世界 (0,0)。翻转后北边（大 Y）在上，
+        // 左上角世界坐标 = (-W/2, +H/2)
+        val (sx0, sy0) = camera.worldToScreen(
+            (-mapWorldW / 2.0).toLong(), (mapWorldH / 2.0).toLong(), canvasW, canvasH
+        )
         val screenW = (mapWorldW * camera.zoom).toFloat()
         val screenH = (mapWorldH * camera.zoom).toFloat()
         val rect = android.graphics.RectF(sx0, sy0, sx0 + screenW, sy0 + screenH)
@@ -297,10 +341,15 @@ class MapRenderer {
         }
     }
 
-    /** 世界坐标点列表 → 屏幕 Path（跳过视口外大块；大路径降采样） */
+    // ---- P3-4：多边形路径复用（G68 补齐）——screenPath 每多边形 new Path 改字段复用。
+    // 主线程串行绘制，返回后立即 drawPath，复用无冲突；by lazy 保持 JVM 可测。
+    private val reusableScreenPath by lazy { Path() }
+
+    /** 世界坐标点列表 → 屏幕 Path（跳过视口外大块；大路径降采样）。返回复用实例，调用方须立即绘制。 */
     private fun screenPath(pts: List<Pair<Long, Long>>, camera: Camera, w: Int, h: Int): Path? {
         if (pts.isEmpty()) return null
-        val sp = Path()
+        val sp = reusableScreenPath
+        sp.reset()
         var inView = false
         val n = pts.size
         // 大路径（>2000 点）降采样步长

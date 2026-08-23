@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -59,14 +60,20 @@ fun UnitEditSheet(
     var alt by remember { mutableStateOf(unit.altitudeMeters()?.toString() ?: "") }
     var depth by remember { mutableStateOf(unit.depthMeters()?.toString() ?: "") }
     // R-P2：X/Y 编辑（桌面版各单位窗口有 X/Y 字段，替代无 Relocate 时的位置调整）
-    var xText by remember { mutableStateOf(unit.x.toString()) }
-    var yText by remember { mutableStateOf(unit.y.toString()) }
+    var xText by remember { mutableStateOf(String.format(java.util.Locale.US, "%.3f", unit.x / 100000.0)) }
+    var yText by remember { mutableStateOf(String.format(java.util.Locale.US, "%.3f", unit.y / 100000.0)) }
     // G13：身份/类型/阵营/航程/呼叫号编辑（桌面版 ContainerIdClass：TextName/TextClass/TextNumber/PopupSide/PopupUnitType）
     var name by remember { mutableStateOf(unit.name) }
     var unitClass by remember { mutableStateOf(unit.unitClass) }
     var numberText by remember { mutableStateOf(unit.number.toString()) }
     var side by remember { mutableStateOf(unit.side) }
-    var rangeText by remember { mutableStateOf(if (unit.range == -100000) "-100000" else unit.range.toString()) }
+    var rangeText by remember {
+        // R4 显示修复：优先毫米余额，避免 syncRangeIntFromMm 向下取整造成“剩余0.6海里显示为0”的假耗尽
+        val disp = if (unit.range == -100000) ""
+                   else if (unit.rangeNmMm >= 0) (unit.rangeNmMm / 1000.0).let { if (it % 1.0 == 0.0) it.toInt().toString() else String.format(java.util.Locale.US, "%.1f", it) }
+                   else unit.range.toString()
+        mutableStateOf(disp)
+    }
     var callsign by remember { mutableStateOf(unit.textTags.callsign) }
     // 类型大类（Domain）与子类型：改类型联动重新判定 Domain 显示区（高度/深度输入、参考点判定等）
     val registry = com.simplot.android.domain.registry.UnitTypeRegistry
@@ -101,8 +108,16 @@ fun UnitEditSheet(
     // G20：主动传感器开关（桌面版 ContainerActiveSensors/ActiveRadar/ActiveSonar）
     var activeRadar by remember { mutableStateOf(unit.isActiveRadar) }
     var activeSonar by remember { mutableStateOf(unit.isActiveSonar) }
-    var visibleBlue by remember { mutableStateOf(com.simplot.android.engine.FogOfWar.isVisibleTo(unit, "Blue")) }
-    var visibleRed by remember { mutableStateOf(com.simplot.android.engine.FogOfWar.isVisibleTo(unit, "Red")) }
+    // 可见性是因（勾选输入），渲染是果：编辑器回显直接读 PerceptionArray 是否含 SeenBySide，
+    // 不走 FogOfWar.isVisibleTo 的 null->全可见兜底（否则裁判全量存档 43 个 null 全亮为两勾，误导为已设互盲）
+    fun hasSeen(side: String) = unit.perceptionArray?.any { it.seenBySide.equals(side, true) } == true
+    val isMistUnset = unit.perceptionArray == null
+    // 保存用初始值：仅勾选变化才写 PerceptionArray，不把 null 污染成显式互可见
+    // 未设迷雾：己方始终可见，对方默认不可见（取消勾选即启用互盲的因，落盘才生成 SpScn 分视角）
+    val initialVisibleBlue = if (isMistUnset) unit.side == "Blue" else hasSeen("Blue")
+    val initialVisibleRed = if (isMistUnset) unit.side == "Red" else hasSeen("Red")
+    var visibleBlue by remember { mutableStateOf(initialVisibleBlue) }
+    var visibleRed by remember { mutableStateOf(initialVisibleRed) }
 
     // 受限项（需求二：对可见单位的脱敏设置，取 Blue/Red 感知记录的值作为编辑状态，双视角）
     val blueRec = unit.perceptionArray?.firstOrNull { it.seenBySide == "Blue" }
@@ -112,6 +127,7 @@ fun UnitEditSheet(
     var showTypeBlue by remember { mutableStateOf(blueRec?.showAsType ?: "") }
     var showSideBlue by remember { mutableStateOf(blueRec?.showAsSide ?: "") }
     // G22：ShowAltitude/ShowDepth 受限项开关（桌面 ContainerPerception 变体；引擎 applyRestrictions 已支持）
+    // 默认 true（与 FogOfWar 新建 Perception 一致）；高度/深度是否可用的“生效”判定在 RestrictedRow 的 enabled 与地图标签/领导线处处理，不应在勾选默认值上一刀切按有无属性隐藏
     var showAltBlue by remember { mutableStateOf(blueRec?.showAltitude ?: true) }
     var showDepthBlue by remember { mutableStateOf(blueRec?.showDepth ?: true) }
     val redRec = unit.perceptionArray?.firstOrNull { it.seenBySide == "Red" }
@@ -127,12 +143,13 @@ fun UnitEditSheet(
         onDismissRequest = onDismiss,
         title = { Text(unit.name.ifEmpty { unit.idNum }) },
         text = {
-            // 反馈⑨：内容超出屏幕时可滚动（此前无滚动，小屏/内容多时底部被截断）
+            // 反馈⑨：内容超出屏幕时可滚动（此前无滚动，小屏/内容多时底部被截断）；U2：避让键盘
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.verticalScroll(rememberScrollState())
+                modifier = Modifier.verticalScroll(rememberScrollState()).imePadding()
             ) {
-                // G13：身份区（桌面版 ContainerIdClass）——名称/类型大类/子类型/阵营/Class/Number/Range/呼叫号
+                // ── ① 身份区（在家分段扫视） ──
+                Text("① 身份 · 类型与阵营", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text("名称") },
@@ -149,6 +166,11 @@ fun UnitEditSheet(
                             .firstOrNull { it.name == newDomainName }?.let { d ->
                             editDomain = d
                             type = registry.typesOf(d).firstOrNull() ?: ""
+                            // #5（G13）修复：切到航空/水下大类时默认初始化高度/深度输入为 "0"，
+                            // 保证判别字段非 null → isAircraft()/isSubmarine() 渲染判定生效
+                            // （此前空输入不落盘 → altitude/depth 保持 null → 类型切换"看似生效实则不变"）
+                            if (d == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR && alt.isBlank()) alt = "0"
+                            if (d == com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE && depth.isBlank()) depth = "0"
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -182,7 +204,7 @@ fun UnitEditSheet(
                 }
                 OutlinedTextField(
                     value = rangeText, onValueChange = { rangeText = it },
-                    label = { Text("航程（海里，-100000=无限制）") },
+                    label = { Text("航程（海里，留空=无限）") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
@@ -192,6 +214,8 @@ fun UnitEditSheet(
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 HorizontalDivider()
+                // ── ② 航行区 ──
+                Text("② 航行 · 航向/航速/高度/深度/位置", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 if (!isReference) {
                     OutlinedTextField(
                         value = courseText,
@@ -236,13 +260,13 @@ fun UnitEditSheet(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = xText, onValueChange = { xText = it },
-                        label = { Text("X（文件单位）") },
+                        label = { Text("X（海里）") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true, modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = yText, onValueChange = { yText = it },
-                        label = { Text("Y（文件单位）") },
+                        label = { Text("Y（海里）") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true, modifier = Modifier.weight(1f)
                     )
@@ -250,7 +274,7 @@ fun UnitEditSheet(
 
                 // G19：被动方位编辑区（桌面版 PassiveBearings：增删/编辑 Type/BeamLength/BeamWidth/Bearing/Emitter/Label/ShowAsSide）
                 HorizontalDivider()
-                Text("被动方位（声呐/ES）", style = MaterialTheme.typography.labelMedium)
+                Text("③ 被动方位 · 声呐/ES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 bearings.forEachIndexed { idx, b ->
                     key(idx) {
                         PassiveBearingRow(
@@ -272,7 +296,7 @@ fun UnitEditSheet(
                 }) { Text("+ 添加被动方位") }
 
                 HorizontalDivider()
-                Text("标签显示（桌面 9 项）", style = MaterialTheme.typography.labelMedium)
+                Text("④ 显示 · 标签与附加文本", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 TagCheckboxRow(
                     showName, { showName = it }, "名称",
                     showTrackNum, { showTrackNum = it }, "航迹号"
@@ -296,7 +320,21 @@ fun UnitEditSheet(
                 )
 
                 HorizontalDivider()
-                Text("可见性（需求二）", style = MaterialTheme.typography.labelMedium)
+                Text("⑤ 可见性 · 感知与传感器", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                if (isMistUnset) {
+                    Text(
+                        "未设迷雾：当前存档 PerceptionArray 为空，保存后两边都可见；取消一勾即启用互盲（保存后将生成 Blue/Red 分视角 SpScn）。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                    )
+                }
+                if (unit.side == "Blue" || unit.side == "Red") {
+                    Text(
+                        "当前为裁判视角（Referee）：如需区分红蓝互盲，请分别保存 Blue/Red 存档验证。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = visibleBlue, onCheckedChange = { visibleBlue = it })
                     Text("对蓝方可见")
@@ -366,17 +404,42 @@ fun UnitEditSheet(
                 unit.number = numberText.toIntOrNull() ?: unit.number
                 unit.unitType = type
                 unit.side = side
-                unit.range = rangeText.toIntOrNull() ?: unit.range
+                if (rangeText.isBlank()) { unit.range = -100000; unit.initRangeMmFromPersisted() }
+                else {
+                    val d = rangeText.toDoubleOrNull()
+                    if (d != null) {
+                        // R4：支持一位小数（如 0.6），写入毫米镜像并向下取整海里到 Int 存档键
+                        val mm = (d * 1000).toLong().coerceAtLeast(0L)
+                        unit.rangeNmMm = mm
+                        unit.syncRangeIntFromMm()
+                    } else { unit.range = -100000; unit.initRangeMmFromPersisted() }
+                }
                 unit.textTags.callsign = callsign
                 // G19：被动方位写回（仅用户增删/编辑过才落盘，未动过的单位不新增键，保字节兼容）
                 if (bearingsDirty) unit.passiveBearingArray = bearings.toMutableList()
                 // 反馈⑨：航向 clamp 0-360；航速不限上限（仅保留下限 0，避免负航速）
                 unit.setCourse(course.toDouble().coerceIn(0.0, 360.0))
                 unit.setSpeed(speed.toDouble().coerceAtLeast(0.0))
-                xText.toLongOrNull()?.let { unit.x = it }    // R-P2：X/Y 应用
-                yText.toLongOrNull()?.let { unit.y = it }
-                if (showAltField && alt.isNotBlank()) unit.setAltitude(alt.toInt())
-                if (showDepthField && depth.isNotBlank()) unit.setDepth(depth.toInt())
+                xText.toDoubleOrNull()?.let { unit.x = (it * 100000).toLong() }    // 海里→文件单位
+                yText.toDoubleOrNull()?.let { unit.y = (it * 100000).toLong() }
+                // P1-2 修复（G13 反向切换）：按当前选择的大类显式重置无关物理量——
+                // 此前 showAltField 以 unit.isAircraft()（altitude 非 null）判定恒 true，
+                // 且 alt 清空时 alt.isNotBlank() 为 false 不写回 → 飞机/潜艇永远改不回水面。
+                // 逻辑抽为纯函数 UnitTypeRegistry.applyDomainDimensions（可 JVM 单测）。
+                when (editDomain) {
+                    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR -> {
+                        com.simplot.android.domain.registry.UnitTypeRegistry.applyDomainDimensions(unit, com.simplot.android.domain.registry.UnitTypeRegistry.Domain.AIR)
+                        if (alt.isNotBlank()) unit.setAltitude(alt.toIntOrNull() ?: 0)
+                    }
+                    com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE -> {
+                        com.simplot.android.domain.registry.UnitTypeRegistry.applyDomainDimensions(unit, com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SUBSURFACE)
+                        if (depth.isNotBlank()) unit.setDepth(depth.toIntOrNull() ?: 0)
+                    }
+                    else -> {
+                        // 水面/设施/车辆/参考点/浮标/陆地编队等：清空高度与深度（回归水面语义）
+                        com.simplot.android.domain.registry.UnitTypeRegistry.applyDomainDimensions(unit, com.simplot.android.domain.registry.UnitTypeRegistry.Domain.SURFACE)
+                    }
+                }
                 unit.textTags.tagName = showName
                 unit.textTags.tagCourseSpeed = showCS
                 unit.textTags.tagTrackNum = showTrackNum
@@ -390,14 +453,18 @@ fun UnitEditSheet(
                 // G20：主动传感器开关写回（桌面 ContainerActiveSensors）
                 unit.isActiveRadar = activeRadar
                 unit.isActiveSonar = activeSonar
-                com.simplot.android.engine.FogOfWar.setVisibility(
-                    unit, "Blue", visibleBlue, unit.positionTimeCreated,
-                    file = null
-                )
-                com.simplot.android.engine.FogOfWar.setVisibility(
-                    unit, "Red", visibleRed, unit.positionTimeCreated,
-                    file = null
-                )
+                if (visibleBlue != initialVisibleBlue || (isMistUnset && !visibleBlue)) {
+                    com.simplot.android.engine.FogOfWar.setVisibility(
+                        unit, "Blue", visibleBlue, unit.positionTimeCreated,
+                        file = null
+                    )
+                }
+                if (visibleRed != initialVisibleRed || (isMistUnset && !visibleRed)) {
+                    com.simplot.android.engine.FogOfWar.setVisibility(
+                        unit, "Red", visibleRed, unit.positionTimeCreated,
+                        file = null
+                    )
+                }
                 // 受限项写回 Blue/Red 感知记录（仅当该单位对该方可见且有记录时）
                 writePerception(unit, "Blue", visibleBlue, showNameBlue, showCSBlue, showClassBlue, showTypeBlue, showSideBlue, showAltBlue, showDepthBlue)
                 writePerception(unit, "Red", visibleRed, showNameRed, showCSRed, showClassRed, showTypeRed, showSideRed, showAltRed, showDepthRed)
@@ -498,6 +565,9 @@ private fun RestrictedRow(
     showSide: String,
     showAltitude: Boolean,
     showDepth: Boolean,
+    // 受限项5勾是否在地图真正起作用：编审校验用注释（名称/航向航速/级别/高度/深度均通过 UnitRenderer 标签与 속도지시선/精灵伪装 挂钩）
+    hasAltitude: Boolean = true,
+    hasDepth: Boolean = true,
     onName: (Boolean) -> kotlin.Unit,
     onCS: (Boolean) -> kotlin.Unit,
     onClass: (Boolean) -> kotlin.Unit,
@@ -506,6 +576,7 @@ private fun RestrictedRow(
     onAltitude: (Boolean) -> kotlin.Unit,
     onDepth: (Boolean) -> kotlin.Unit
 ) {
+    // 5 勾均有文字且与地图一致 → 三勾常显，高度/深度按有无该属性决定 enabled（置灰非隐藏，符合“仅对有该属性的单位类型生效，不应一刀切隐藏”）
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = showName, onCheckedChange = onName)
         Text("显示名称")
@@ -515,10 +586,13 @@ private fun RestrictedRow(
         Text("显示级别")
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(checked = showAltitude, onCheckedChange = onAltitude)
-        Text("显示高度")
-        Checkbox(checked = showDepth, onCheckedChange = onDepth)
-        Text("显示深度")
+        Checkbox(checked = showAltitude, onCheckedChange = onAltitude, enabled = hasAltitude)
+        Text("显示高度", color = if (hasAltitude) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+        Checkbox(checked = showDepth, onCheckedChange = onDepth, enabled = hasDepth)
+        Text("显示深度", color = if (hasDepth) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+        if (!hasAltitude && !hasDepth) {
+            Text("（该类型无高度/深度属性，勾选在地图标签不生效）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
     ShowAsDropdown(
         label = "显示为类型",

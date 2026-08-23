@@ -111,6 +111,24 @@ object UnitRenderer {
     )
 
     /**
+     * UnitType → CWS 格位回退（桌面精灵链路主链路补充）：
+     * 当存档 UnitClass 为空（第三次所罗门海战 S006-S041 全部空串）时，
+     * 按 UnitType 映射到与桌面 CwsSymbols.GetUnitType 同语义的格位，
+     * 保证有素材必走精灵，不落入矢量红点兜底。
+     * 映射覆盖该存档全部 4 种类型：Battleship/Cruiser/Destroyer/Surface Ship；
+     * 通用 Surface Ship 回退到 DD 格（通用水面舰精灵，与桌面一致为带字母圆图标）。
+     */
+    private val CWS_UNITTYPE_CELLS = mapOf(
+        "BATTLESHIP" to (1 to 2),   // BB
+        "CRUISER" to (1 to 3),      // CC
+        "DESTROYER" to (1 to 4),    // DD
+        "FRIGATE" to (1 to 5),      // FF
+        "PATROL" to (1 to 6),       // PC
+        "CARRIER" to (1 to 1),      // CV
+        "SURFACE SHIP" to (1 to 4)  // 通用水面舰 → DD 格（桌面素材为准，避免矢量红点）
+    )
+
+    /**
      * 空中/水下单位精灵图格位（row2/row0，精灵图实测：
      * row2 col16/19/22 = 飞机（机头+双翼轮廓），row2 col12 = 潜艇（鱼形+指挥塔），
      * row0 col21 = 导弹（黄色弹体+两侧 A））。
@@ -168,6 +186,13 @@ object UnitRenderer {
         color = 0xFF333333.toInt(); style = Paint.Style.STROKE; strokeWidth = 1.5f
     } }
 
+    /**
+     * #9：可复用 Path（每单位每帧会创建 6+ 个 Path，改用单例 + 每次使用前 reset()）。
+     * drawPath 不清空几何，故同一 Path 需连续画两遍（如 WW2 frame）时两遍间不 reset，
+     * 仅在下一次「开始构建新形状」前 reset()。惰性初始化 → JVM 单测不触发构造。
+     */
+    private val reusablePath by lazy { Path() }
+
     /** appContext==null 时只告警一次（防刷屏） */
     private val warnedNoContext = AtomicBoolean(false)
 
@@ -188,7 +213,7 @@ object UnitRenderer {
         SymbolSet.CWS_COLOR_FILLED -> "color_filled"
         SymbolSet.CWS_COLOR_UNFILLED -> "color_unfilled"
         SymbolSet.CWS_MONO_FILLED -> "mono_filled"
-        SymbolSet.NTDS -> "color_filled"   // NTDS 不走精灵图（仅兜底名）
+        SymbolSet.NTDS -> "color_filled"   // NTDS 不应调用本函数（FIX-SYM 后 draw 已分流）；仅为编译完备保留
     }
 
     private fun spriteFileName(side: String, variant: String): String = when (side) {
@@ -238,11 +263,15 @@ object UnitRenderer {
         return true
     }
 
-    /** CWS 精灵图格位解析：水面舰按 class，飞机/直升机/潜艇/导弹按 domain */
+    /** CWS 精灵图格位解析：水面舰按 class（含 UnitType 回退），飞机/直升机/潜艇/导弹按 domain */
     private fun cwsCellOf(u: Unit): Pair<Int, Int>? {
         // 参考点不走精灵图（虚线圆/菱形单独绘制）
         val cls = u.unitClass.trim().uppercase()
         CWS_CLASS_CELLS[cls]?.let { return it }
+        // 存档 UnitClass 为空时（如第三次所罗门海战 S006-S041）按 UnitType 回退到精灵格位
+        // 保证有素材必用精灵，不落入矢量红点兜底；与桌面 CwsSymbols.GetUnitType 语义一致
+        val typeKey = u.unitType.trim().uppercase()
+        CWS_UNITTYPE_CELLS[typeKey]?.let { return it }
         // 空中/水下单位（桌面版 CwsSymbols 有独立图标，不是纯色三角形）
         val type = u.unitType.lowercase()
         return when {
@@ -293,6 +322,28 @@ object UnitRenderer {
     fun isDotRendering(sizeLevel: SymbolSize, showFriendlySymbols: Boolean, side: String): Boolean =
         sizeLevel == SymbolSize.DOTS || (!showFriendlySymbols && side == "Blue")
 
+    /**
+     * 桌面 Perception 受限渲染：当前观察侧（showSideName）对该单位的可见数据快照。
+     * - null=Referee/ALL 全知视角（不应用受限，直接用真实值）
+     * - 非空时若存在对应该阵营的感知记录 → showName/showCS/showClass/showAltitude/showDepth/showAsSide/AsType 受限可见
+     *   （与 FogOfWar.applyRestrictions 存档侧脱敏一致，地图侧实时生效）
+     */
+    data class RestrictedView(
+        val showName: Boolean?,
+        val showCourseSpeed: Boolean?,
+        val showClass: Boolean?,
+        val showAltitude: Boolean?,
+        val showDepth: Boolean?,
+        val showAsType: String?,
+        val showAsSide: String?
+    )
+
+    fun restrictedViewOf(unit: Unit, showSideName: String?): RestrictedView? {
+        if (showSideName == null) return null
+        val per = unit.perceptionArray?.firstOrNull { it.seenBySide.equals(showSideName, true) } ?: return null
+        return RestrictedView(per.showName, per.showCourseSpeed, per.showClass, per.showAltitude, per.showDepth, per.showAsType, per.showAsSide)
+    }
+
     fun draw(
         canvas: Canvas, u: Unit, sx: Float, sy: Float, sizePx: Float = 16f, selected: Boolean = false,
         symbolStyle: SymbolStyle = SymbolStyle.NTDS,
@@ -301,7 +352,8 @@ object UnitRenderer {
         sizeLevel: SymbolSize = SymbolSize.DEFAULT,
         showSpeedLeader: Boolean = true,
         palette: Palette = Palette(),
-        friendlySymbols: Boolean = true
+        friendlySymbols: Boolean = true,
+        showSideName: String? = null
     ) {
         // 参考点（桌面版 CReferencePoint 单独处理：虚线圆/菱形标记）——在速度领导线之前绘制
         if (u.idNum.startsWith("R") || u.unitType.equals("Reference Point", true) || u.unitType.equals("Datum", true)) {
@@ -314,7 +366,11 @@ object UnitRenderer {
         // 反馈⑩：更粗更长（与图标大小匹配）：线宽 1.5f→2.5f，长度系数 2.2→3.2、上限 90→140；
         // 起点从图标边缘出发（不遮挡航向标起点）；R4 修复：受 ShowSpeedLeaders 开关控制
         // G46：线端补箭头（speedLeaderGeometry）
-        if (showSpeedLeader && u.speedKnots() > 0 && !dotMode) {
+        // 受限挂钩：对 X 方可见且该方 ShowCourseSpeed=false 时，地图不画速度领导线（与标签/落盘限制一致）
+        val _rv = restrictedViewOf(u, showSideName)
+        val showCsRestricted = _rv?.showCourseSpeed
+        val canShowLeader = showSpeedLeader && (showCsRestricted == null || showCsRestricted) && u.speedKnots() > 0 && !dotMode
+        if (canShowLeader) {
             val r = sizePx / 2
             val leaderLen = (u.speedKnots() * 3.2).coerceAtLeast(14.0).coerceAtMost(140.0).toFloat()
             val g = speedLeaderGeometry(sx, sy, u.courseDeg(), leaderLen, r)
@@ -322,57 +378,120 @@ object UnitRenderer {
             leaderPaint.color = palette.sideColor(u.side)
             canvas.drawLine(g.startX, g.startY, g.endX, g.endY, leaderPaint)
             arrowFillPaint.color = palette.sideColor(u.side)
-            val arrow = Path().apply {
+            // #9：复用 Path（先 reset 再构建，避免每帧 new）
+            reusablePath.reset()
+            reusablePath.apply {
                 moveTo(g.arrowTipX, g.arrowTipY)
                 lineTo(g.arrowBase1X, g.arrowBase1Y)
                 lineTo(g.arrowBase2X, g.arrowBase2Y)
                 close()
             }
-            canvas.drawPath(arrow, arrowFillPaint)
+            canvas.drawPath(reusablePath, arrowFillPaint)
         }
-        val sideColor = palette.sideColor(u.side)
+        val sideColor = palette.sideColor(if (_rv?.showAsSide?.isNotBlank() == true) _rv.showAsSide!! else u.side)
         // G68：复用字段 paint（样式初始化已配），仅改色
         strokePaint.color = sideColor
         fillPaint.color = sideColor
 
         val r = sizePx / 2
+        val effSideForOutline = if (_rv?.showAsSide?.isNotBlank() == true) _rv.showAsSide!! else u.side
+        val needOutline = needsOutline(effSideForOutline)
         if (dotMode) {
-            // G08：Dots 档 / 关闭友军符号 → 位置点（实心小圆，保留选中/传感器/沉没标记）
+            // G08：Dots 档 / 关闭友军符号 → 位置点（实心小圆，保留选中/传感器/沉没标记）；N1：Neutral白点加深色描边
             canvas.drawCircle(sx, sy, sizePx * 0.25f, fillPaint)
+            if (needOutline) canvas.drawCircle(sx, sy, sizePx * 0.25f, refOutlinePaint)
         } else if (ww2) {
-            // R5：WW2 符号（桌面版 WW2Symbols）：菱形框架 + 类型字母，阵营色
-            val frame = Path().apply {
+            // R5：WW2 符号（桌面版 WW2Symbols）：菱形框架 + 类型字母，阵营色；N1：Neutral/All 白系加深色描边
+            // #9：复用 Path（先 reset 再构建；frame 需描边+填充两遍，两遍间不 reset）
+            reusablePath.reset()
+            reusablePath.apply {
                 moveTo(sx, sy - r)
                 lineTo(sx + r * 0.9f, sy)
                 lineTo(sx, sy + r)
                 lineTo(sx - r * 0.9f, sy)
                 close()
             }
-            canvas.drawPath(frame, fillPaint)
-            canvas.drawPath(frame, strokePaint)
+            canvas.drawPath(reusablePath, fillPaint)
+            canvas.drawPath(reusablePath, strokePaint)
+            if (needOutline) canvas.drawPath(reusablePath, refOutlinePaint)
             // 类型字母（类简码首字母）；G68：复用字段 paint（textAlign 初始化已配），仅改色/字号
             val letter = u.unitClass.firstOrNull()?.uppercaseChar() ?: u.unitType.firstOrNull()?.uppercaseChar() ?: '?'
             letterPaint.color = Color.WHITE
             letterPaint.textSize = sizePx * 0.7f
             canvas.drawText(letter.toString(), sx, sy + sizePx * 0.25f, letterPaint)
+        } else if (symbolSet == SymbolSet.NTDS) {
+            // FIX-SYM：NTDS 是独立符号系统（桌面 DrawUnitNtds：水面=实心圆点、潜艇=十字、飞机=三角形），
+            // 不使用 PNG 精灵图（精灵图仅 CWS 三变体专用，GetSymbolSet 只服务 CWS）。
+            // 此前把 NTDS 映射到 color_filled 导致与 CWS 完全相同——用户实测"CWS 和 NTDS 一样"即此根因。
+            val rN = r
+            // 水面舰艇：实心圆点 + 北向船头线（NTDS 主形状；纯点与 CWS 圆圈过近难辨，
+            // 加船头线既保留"实心圆点"语义又能看航向——桌面 DrawUnitNtds 水面亦带航向指示）
+            when {
+                u.isAircraft() -> {
+                    // 飞机：三角翼（填充+描边，覆盖圆点）
+                    reusablePath.reset()
+                    reusablePath.apply {
+                        moveTo(sx, sy - rN * 1.15f)
+                        lineTo(sx - rN * 1.25f, sy + rN * 0.95f)
+                        lineTo(sx + rN * 1.25f, sy + rN * 0.95f)
+                        close()
+                    }
+                    canvas.drawPath(reusablePath, fillPaint)
+                    canvas.drawPath(reusablePath, strokePaint)
+                    if (needOutline) canvas.drawPath(reusablePath, refOutlinePaint)
+                }
+                u.isSubmarine() -> {
+                    // 潜艇：十字（桌面 DrawUnitNtds 明确：潜艇=十字）
+                    canvas.drawLine(sx - rN * 1.2f, sy, sx + rN * 1.2f, sy, strokePaint)
+                    canvas.drawLine(sx, sy - rN * 1.2f, sx, sy + rN * 1.2f, strokePaint)
+                }
+                else -> {
+                    // 水面舰艇：实心圆点增大可视半径 + 航向船头线（NTDS 主形状；纯点与 CWS 圆圈难辨）
+                    canvas.drawCircle(sx, sy, sizePx * 0.5f, strokePaint)
+                    val hdg = Math.toRadians(u.courseDeg())
+                    val sinH = kotlin.math.sin(hdg).toFloat()
+                    val cosH = kotlin.math.cos(hdg).toFloat()
+                    canvas.drawLine(
+                        sx + sizePx * 0.5f * sinH,
+                        sy - sizePx * 0.5f * cosH,
+                        sx + sizePx * 0.95f * sinH,
+                        sy - sizePx * 0.95f * cosH,
+                        strokePaint
+                    )
+                }
+            }
         } else {
-            // G47：CWS 变体（color_filled/color_unfilled/mono_filled）精灵图优先；NTDS 或资产缺失 → 矢量
-            val cws = symbolSet != SymbolSet.NTDS
-            val spriteDrawn = cws && drawCwsIcon(canvas, u, sx, sy, sizePx, spriteVariant(symbolSet))
+            // G47：CWS 变体（color_filled/color_unfilled/mono_filled）精灵图优先；资产缺失才矢量兜底
+            // 受限：showAsType/showAsSide 在地图侧实时伪装显示（与 FogOfWar.applyRestrictions 存档侧一致，互补落盘前实时受限渲染）
+            val rv2 = _rv
+            val effUnitTypeForSprite = rv2?.showAsType?.takeIf { it.isNotBlank() } ?: u.unitType
+            val effSideForSprite = rv2?.showAsSide?.takeIf { it.isNotBlank() } ?: u.side
+            // 用受限后的类型/阵营去解析精灵格位与阵营色（非空字符串才视为伪装）
+            val spriteUnit = if (rv2 != null && (rv2.showAsType?.isNotBlank() == true || rv2.showAsSide?.isNotBlank() == true)) {
+                // 轻量拷贝仅改显示字段（不影响原存档对象；draw 内只读 unitType/unitClass/side）
+                u.copy(unitType = effUnitTypeForSprite, side = effSideForSprite)
+            } else u
+            // 若受限 showClass=false，伪装类型对应的格位仍可显示，但不在标签区显示级别（标签由 drawUnitLabel 控制）
+            val spriteDrawn = drawCwsIcon(canvas, spriteUnit, sx, sy, sizePx, spriteVariant(symbolSet))
+            // N1：Neutral/All 白系精灵图（位图）在浅底上也加描边外圈（位图本身无矢量描边，补一圈深色圆）保证可见
+            if (spriteDrawn && needOutline) canvas.drawCircle(sx, sy, r, refOutlinePaint)
             if (!spriteDrawn) {
                 // 填充语义：NTDS=不填充（仅中心小点）；CWS Color Filled / Mono Filled=填充；Color Unfilled=空心描边
+                // N1：Neutral/All 白系在浅底（海图/白背景）上加深色描边打底保证可见
                 val filled = symbolSet == SymbolSet.CWS_COLOR_FILLED || symbolSet == SymbolSet.CWS_MONO_FILLED
                 when {
                     u.isAircraft() -> {
                         // 飞机：三角翼符号
-                        val path = Path().apply {
+                        // #9：复用 Path（先 reset 再构建）
+                        reusablePath.reset()
+                        reusablePath.apply {
                             moveTo(sx, sy - r)
                             lineTo(sx - r * 1.1f, sy + r * 0.8f)
                             lineTo(sx + r * 1.1f, sy + r * 0.8f)
                             close()
                         }
-                        canvas.drawPath(path, strokePaint)
-                        if (filled) canvas.drawPath(path, fillPaint)
+                        canvas.drawPath(reusablePath, strokePaint)
+                        if (filled) canvas.drawPath(reusablePath, fillPaint)
                     }
                     u.isSubmarine() -> {
                         // 潜艇：横椭圆 + 中线
@@ -386,7 +505,7 @@ object UnitRenderer {
                         if (filled) canvas.drawRect(sx - r, sy - r, sx + r, sy + r, fillPaint)
                     }
                     else -> {
-                        // 水面舰艇：圆（北向船头线）；CWS 填充为实心圆点
+                        // 水面舰艇：圆（北向船头线）；精灵优先，无精灵才矢量兜底
                         canvas.drawCircle(sx, sy, r, strokePaint)
                         canvas.drawLine(sx, sy - r, sx, sy + r * 0.6f, strokePaint)
                         if (filled) {
@@ -394,6 +513,23 @@ object UnitRenderer {
                         } else {
                             canvas.drawCircle(sx, sy, r * 0.35f, fillPaint)
                         }
+                    }
+                }
+                // N1：矢量白符号在浅底上加深色描边外圈（仅对 Neutral/All 且走矢量分支）
+                if (needOutline) {
+                    when {
+                        u.isAircraft() -> {
+                            reusablePath.reset()
+                            reusablePath.apply { moveTo(sx, sy - r); lineTo(sx - r * 1.1f, sy + r * 0.8f); lineTo(sx + r * 1.1f, sy + r * 0.8f); close() }
+                            canvas.drawPath(reusablePath, refOutlinePaint)
+                        }
+                        u.isSubmarine() -> {
+                            canvas.drawOval(sx - r * 1.3f, sy - r * 0.7f, sx + r * 1.3f, sy + r * 0.7f, refOutlinePaint)
+                        }
+                        u.unitType.equals("Airfield", true) || u.idNum.startsWith("L") -> {
+                            canvas.drawRect(sx - r, sy - r, sx + r, sy + r, refOutlinePaint)
+                        }
+                        else -> canvas.drawCircle(sx, sy, r, refOutlinePaint)
                     }
                 }
             }
@@ -407,23 +543,27 @@ object UnitRenderer {
         // 主动传感器激活标记（桌面版 ActiveSensors.Draw）：雷达=黄色三角（右上），声纳=蓝色菱形（左上）
         // G68：复用字段 paint（固定色，样式初始化已配）
         if (u.isActiveRadar) {
-            val tri = Path().apply {
+            // #9：复用 Path（先 reset 再构建）
+            reusablePath.reset()
+            reusablePath.apply {
                 moveTo(sx + r + 2f, sy - r - 6f)
                 lineTo(sx + r + 8f, sy - r - 10f)
                 lineTo(sx + r + 10f, sy - r - 3f)
                 close()
             }
-            canvas.drawPath(tri, radarPaint)
+            canvas.drawPath(reusablePath, radarPaint)
         }
         if (u.isActiveSonar) {
-            val dia = Path().apply {
+            // #9：复用 Path（先 reset 再构建）
+            reusablePath.reset()
+            reusablePath.apply {
                 moveTo(sx - r - 8f, sy - r - 8f)
                 lineTo(sx - r - 3f, sy - r - 11f)
                 lineTo(sx - r + 2f, sy - r - 8f)
                 lineTo(sx - r - 3f, sy - r - 5f)
                 close()
             }
-            canvas.drawPath(dia, sonarPaint)
+            canvas.drawPath(reusablePath, sonarPaint)
         }
 
         // 沉没标记：叉（G68：复用字段 paint，固定色）
@@ -443,8 +583,9 @@ object UnitRenderer {
         // G68：复用字段 paint（虚线 pathEffect 等样式初始化已配），仅改色
         refDashedPaint.color = sideColor
         canvas.drawCircle(sx, sy, r, refDashedPaint)
-        // 中心菱形
-        val dia = Path().apply {
+        // 中心菱形（#9：复用 Path，先 reset 再构建）
+        reusablePath.reset()
+        reusablePath.apply {
             moveTo(sx, sy - r * 0.8f)
             lineTo(sx + r * 0.8f, sy)
             lineTo(sx, sy + r * 0.8f)
@@ -452,11 +593,11 @@ object UnitRenderer {
             close()
         }
         refFillPaint.color = sideColor
-        canvas.drawPath(dia, refFillPaint)
+        canvas.drawPath(reusablePath, refFillPaint)
         // D8：白色/浅色符号加深色描边
         if (needsOutline(u.side)) {
             canvas.drawCircle(sx, sy, r, refOutlinePaint)
-            canvas.drawPath(dia, refOutlinePaint)
+            canvas.drawPath(reusablePath, refOutlinePaint)
         }
         if (selected) {
             canvas.drawCircle(sx, sy, r + 5f, selPaint)

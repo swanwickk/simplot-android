@@ -27,11 +27,25 @@ import com.simplot.android.domain.model.PlayerSettings
  */
 object PlayerSettingsCodec {
 
-    /** 桌面 Display_Options 键序（与 ScenarioRepository.DEFAULT_PLAYER_SETTINGS 对齐） */
-    val DISPLAY_KEY_ORDER = listOf(
-        "ShowCities", "ShowCountries", "ShowWaters", "ShowWaypoints", "ShowDepths",
-        "ShowDepthKey", "ShowEs", "ShowGrid", "ShowScaleBar", "ShowWeapons",
-        "ShowSensors", "ShowSonar", "ShowLabels", "ShowSpeedLeaders", "ShowFormations"
+    /** 桌面 Display_Options 键序 + 取值映射（写盘唯一来源；与 ScenarioRepository.DEFAULT_PLAYER_SETTINGS 对齐）。
+     *  #10 修复：toDesktopJson 由此表生成，消灭 v0.6.0 的「双份键序真相」
+     *  （此前 DISPLAY_KEY_ORDER 死代码列表 + toDesktopJson 里顺序硬编码 addProperty）。 */
+    private val DISPLAY_KEYS: List<Pair<String, (PlayerSettings) -> Boolean>> = listOf(
+        "ShowCities" to { it.showCities },
+        "ShowCountries" to { it.showCountries },
+        "ShowWaters" to { it.showWaters },
+        "ShowWaypoints" to { it.showWaypoints },
+        "ShowDepths" to { it.showDepths },
+        "ShowDepthKey" to { it.showDepthKey },
+        "ShowEs" to { it.showEs },
+        "ShowGrid" to { it.showGrid },
+        "ShowScaleBar" to { it.showScaleBar },
+        "ShowWeapons" to { it.showWeapons },
+        "ShowSensors" to { it.showSensors },
+        "ShowSonar" to { it.showSonar },
+        "ShowLabels" to { it.showLabels },
+        "ShowSpeedLeaders" to { it.showSpeedLeaders },
+        "ShowFormations" to { it.showFormations }
     )
 
     /**
@@ -43,21 +57,8 @@ object PlayerSettingsCodec {
         val ps = JsonObject()
         ps.addProperty("File", fileTag)
         val disp = JsonObject()
-        disp.addProperty("ShowCities", settings.showCities)
-        disp.addProperty("ShowCountries", settings.showCountries)
-        disp.addProperty("ShowWaters", settings.showWaters)
-        disp.addProperty("ShowWaypoints", settings.showWaypoints)
-        disp.addProperty("ShowDepths", settings.showDepths)
-        disp.addProperty("ShowDepthKey", settings.showDepthKey)
-        disp.addProperty("ShowEs", settings.showEs)
-        disp.addProperty("ShowGrid", settings.showGrid)
-        disp.addProperty("ShowScaleBar", settings.showScaleBar)
-        disp.addProperty("ShowWeapons", settings.showWeapons)
-        disp.addProperty("ShowSensors", settings.showSensors)
-        disp.addProperty("ShowSonar", settings.showSonar)
-        disp.addProperty("ShowLabels", settings.showLabels)
-        disp.addProperty("ShowSpeedLeaders", settings.showSpeedLeaders)
-        disp.addProperty("ShowFormations", settings.showFormations)
+        // #10：由 DISPLAY_KEYS 单一来源生成（键序与桌面 SaveDisplayOptions 逐项一致）
+        DISPLAY_KEYS.forEach { (key, get) -> disp.addProperty(key, get(settings)) }
         ps.add("Display_Options", disp)
         ps.addProperty("PlayerName", settings.playerName)
         ps.add("Units", JsonArray())

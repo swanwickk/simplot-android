@@ -4,9 +4,6 @@ import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.data.model.Unit
 import com.simplot.android.data.model.Waypoint
 import com.simplot.android.data.util.CoordUtil
-import com.simplot.android.data.util.TimeUtil
-import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -23,7 +20,7 @@ import kotlin.math.sin
  * - 航路点到达后归档（ArchiveFutureWaypoint）
  *
  * 指令表（UnitMove）保留为 UI 便捷入口，但语义简化为直接设定：
- * newCourse/courseDelta → 直接改航向；newSpeed/speedDelta/boost/decel → 直接改航速。
+ * newCourse/courseDelta → 直接改航向；newSpeed/speedDelta → 直接改航速。
  */
 object MovementEngine {
 
@@ -34,9 +31,12 @@ object MovementEngine {
 
     /**
      * 航速指令（D9 简化：直接设定，无能力表/无转向损失）：
-     * - [boost]/[decel]：按尺寸等级能力表加速/减速一档（保留参考，无 75% 分档）
      * - [speedDelta]：加速/减速 X 节（负数=减速）
      * - [newSpeed]：具体航速（节）
+     * - [newAltitude]/[newDepth]：飞机/潜艇新高度/深度（米，原样存取）
+     * - [emergency]：急舵（保留字段，桌面版无此概念，不生效）
+     * （#8 G66：boost/decel 尺寸级能力表加减速为 D9 移除的死代码，已删除；
+     *  依赖这些字段/极地转向表的过时回归测试已同步清理）
      */
     data class UnitMove(
         val idNum: String,
@@ -44,8 +44,6 @@ object MovementEngine {
         var courseDelta: Double? = null,    // 相对转向量（度，右正左负）
         var newSpeed: Double? = null,       // 指定新航速（节）
         var speedDelta: Double? = null,     // 相对加减速（节，负数=减速）
-        var boost: Boolean = false,         // 提速一档（按能力表 accel）
-        var decel: Boolean = false,         // 减速一档（按能力表 decel）
         var newAltitude: Int? = null,       // 飞机新高度（米，原样存取）
         var newDepth: Int? = null,          // 潜艇新深度（米，原样存取）
         var emergency: Boolean = false      // 急舵（保留字段，桌面版无此概念，不生效）
@@ -61,30 +59,49 @@ object MovementEngine {
                 moves: Map<String, UnitMove> = emptyMap()) {
         val minutes = interval.totalMinutes()
         val curTime = file.time.currentPositionTime
-        // 必须在移动前捕获状态（移动会写入轨迹点，影响 detect）
-        val stateBefore = TurnState.detect(file)
+        // #6（G40）：记录本回合开始时仍有未来航路点的单位——"本回合消费了最后一个未来航路点"
+        // 的判定基线（避免误报：从未设航线的单位（历史有轨迹、当前无未来航路点）不再被标记）。
+        val hadFutureWpIds = file.units.filter { it.futureWaypointArray.isNotEmpty() }.map { it.idNum }.toSet()
+        // 每回合重置最终航路点标记（引擎精确标记，替代 AdvanceTurnUseCase 的过宽条件）
+        file.units.forEach { it.reachedFinalWaypoint = false }
         // 保存 undo 快照（深拷贝，不落盘）；E5：连同 Objects 一起快照
         file.undoSnapshot = file.units.map { deepCopyUnit(it) }
         file.undoObjects = file.objects.toMutableList()
+        // R1：新建单位当回合不移动、次回合参与（桌面无此标志；安卓用 isNewThisTurn 实现一次豁免）
+        // 捕获本回合新建集合，快照已保留标记，随后逐单位清标记并跳过本回合移动/归档/高度
+        val newThisTurnIds = file.units.filter { it.isNewThisTurn }.map { it.idNum }.toSet()
+        // 清标记（下一次 Do 即参与）
+        file.units.forEach { if (it.idNum in newThisTurnIds) it.isNewThisTurn = false }
 
+        // R2：传真实 distNm 并改顺序 move→archive→altitude（桌面 CustomTimer：Move→Archive→ChangeAltitude）
+        val distById = mutableMapOf<String, Double>()
         for (u in file.units) {
-            if (u.isNewThisTurn) continue   // 新单位当回合不移动
+            if (u.idNum in newThisTurnIds) continue
             val move = moves[u.idNum]
-            applyUnitMove(file, u, move, minutes, curTime)
+            val d = applyUnitMove(file, u, move, minutes, curTime)
+            distById[u.idNum] = d
         }
-
-        // 高度/深度随航路点调整（桌面版 ChangeAltitude/ChangeDepth）
+        // 先归档（用真实移动距离，含 Range 截断；Range=0 时 dist=0 仍以 1nm 最小阈值判定）
         for (u in file.units) {
-            if (u.isNewThisTurn) continue
+            if (u.idNum in newThisTurnIds) continue
+            val d = distById[u.idNum] ?: 0.0
+            archiveReachedWaypoint(u, distOfTurn = d)
+        }
+        // 后高度/深度（目标取归档后的首个未来航路点，与桌面 ChangeAltitude 时序一致）
+        for (u in file.units) {
+            if (u.idNum in newThisTurnIds) continue
             applyAltitudeDepth(u)
-            // E10：归档阈值用本回合实际移动距离（新航速 × 时长）
-            archiveReachedWaypoint(u, distOfTurn = newSpeedOf(u) * minutes / 60.0)
         }
 
         // 编队移动（桌面版 Formations.Move）：成员相对中心按编队几何重定位
         moveFormations(file.units)
 
-        TurnState.advanceTime(file, interval, stateBefore)
+        // #6（G40）：本回合消费了最后一个未来航路点的单位 → 精确标记触发弹窗（桌面 NoFutureWaypoints）
+        for (u in file.units) {
+            if (u.idNum in hadFutureWpIds && u.futureWaypointArray.isEmpty()) u.reachedFinalWaypoint = true
+        }
+
+        TurnState.advanceTime(file, interval)
     }
 
     /**
@@ -105,7 +122,7 @@ object MovementEngine {
             var colIdx = 1
             for (m in members) {
                 if (m.idNum == centerId || m.isFormationCenter == true) continue
-                if (m.isNewThisTurn) continue
+                // 新建单位已随中心编队重定位（R1 本回合豁免仅针对位移；队形几何仍跟中心）
                 val bearingBase = (m.formationBearing ?: 0).toDouble() / 1000.0
                 val distFile = (m.formationDistance ?: 0).toDouble()
                 when (type) {
@@ -135,7 +152,8 @@ object MovementEngine {
     }
 
     /** 当前航速（节） */
-    private fun newSpeedOf(u: Unit): Double = u.speedKnots()
+
+    // 兼容保留：已有调用点不再依赖
 
     /**
      * 高度/深度引擎：向首个未来航路点指定的高度/深度趋近。
@@ -183,25 +201,32 @@ object MovementEngine {
         val dx = (u.x - wp.x).toDouble()
         val dy = (u.y - wp.y).toDouble()
         val distFile = kotlin.math.sqrt(dx * dx + dy * dy)
-        val threshold = maxOf(distOfTurn * CoordUtil.NMI_SCALE.toDouble(), CoordUtil.NMI_SCALE.toDouble())
+        // FIX10：去掉 1nm 最小阈值——桌面 ArchiveFutureWaypoint 按本回合实走距离判定，
+        // 慢速船（如拖轮 0.25nm）不应被提前吸走航路点。distOfTurn<=0（停船/Range耗尽）不归档。
+        val threshold = distOfTurn * CoordUtil.NMI_SCALE.toDouble()
+        if (threshold <= 0.0) return
         if (distFile <= threshold) {
             u.futureWaypointArray.removeAt(0)
             u.pastWaypointArray.add(wp)
         }
     }
 
-    /** 深拷贝单位（保留瞬态字段）；E5：补 ignoreRange */
+    /** 深拷贝单位（保留瞬态字段）；E5：补 ignoreRange；#22：补编队准备瞬态字段；E3：已补 reachedFinalWaypoint/rangeNmMm */
     private fun deepCopyUnit(src: Unit): Unit {
         val gson = com.simplot.android.data.codec.JsonUtil.gson
         val copy = gson.fromJson(gson.toJson(src), Unit::class.java)
-        // 瞬态字段手动复制
+        // 瞬态字段手动复制（@Transient Gson 忽略）
         copy.isNewThisTurn = src.isNewThisTurn
-        copy.maxSpeedKnots = src.maxSpeedKnots
         copy.ignoreRange = src.ignoreRange
+        copy.reachedFinalWaypoint = src.reachedFinalWaypoint
+        copy.rangeNmMm = src.rangeNmMm
+        // rangeMm 持久化键会随 gson 往返自动复制，无需手动补
+        copy.formationWaypointBackup = src.formationWaypointBackup?.toMutableList()
+        copy.formationPrepPosition = src.formationPrepPosition
         return copy
     }
 
-    private fun applyUnitMove(file: ScenarioFile, u: Unit, move: UnitMove?, minutes: Double, curTime: String) {
+    private fun applyUnitMove(file: ScenarioFile, u: Unit, move: UnitMove?, minutes: Double, curTime: String): Double {
         val oldCourse = u.courseDeg()
         val oldSpeed = u.speedKnots()
 
@@ -211,13 +236,11 @@ object MovementEngine {
         if (move?.courseDelta != null) newCourse = oldCourse + move.courseDelta!!
         newCourse = ((newCourse % 360.0) + 360.0) % 360.0   // 规范化 0-360
 
-        // 新航速：直接设定（D9：无能力表/无 75% 档/无转向损失）
+        // 新航速：直接设定（D9：无能力表/无 75% 档/无转向损失；#8 已移除 boost/decel 分支）
         var newSpeed = oldSpeed
         when {
             move?.newSpeed != null -> newSpeed = move.newSpeed!!
             move?.speedDelta != null -> newSpeed = oldSpeed + move.speedDelta!!
-            move?.boost == true -> newSpeed = oldSpeed + SizeLevels.of(u).accel
-            move?.decel == true -> newSpeed = oldSpeed - SizeLevels.of(u).decel
         }
         if (newSpeed < 0) newSpeed = 0.0
 
@@ -228,15 +251,18 @@ object MovementEngine {
         // 记录起点轨迹（移动前位置）——桌面版对象结构
         u.pastWaypointArray.add(makeWaypoint(u, curTime))
 
-        // Range 限制（-100000 = 无限制；0 = 已耗尽停止）
-        // E4 修复：按实际距离扣减（roundToInt），去掉"至少扣 1 海里"的过度消耗
+        // R4：Range 毫米海里余额（避免 0.4→1/0.6→1 的 round 漂移；桌面 RangeRemaining Double；跨存盘用 RangeMm）
         var distNm = newSpeed * minutes / 60.0
         if (u.range >= 0 && !u.ignoreRange) {
-            if (distNm >= u.range) {
-                distNm = u.range.toDouble()   // 本回合耗尽剩余 Range
-                u.range = 0
+            if (u.rangeNmMm < 0) u.initRangeMmFromPersisted()
+            val needMm = (distNm * 1000.0).toLong()
+            if (needMm >= u.rangeNmMm) {
+                distNm = u.rangeNmMm / 1000.0
+                u.rangeNmMm = 0
+                u.syncRangeIntFromMm()
             } else {
-                u.range -= maxOf(0, distNm.roundToInt())   // 0.6nm→1，0.15nm→0
+                u.rangeNmMm -= needMm
+                u.syncRangeIntFromMm()
             }
         }
 
@@ -252,6 +278,7 @@ object MovementEngine {
             u.course = (newCourse * 1000).roundToInt()
         }
         u.speed = (newSpeed * 1000).roundToInt()
+        return distNm
     }
 
     // ============ G15 手动移动控制（桌面版 ContainerMove DoMove/Pause/UndoMove） ============
@@ -266,13 +293,14 @@ object MovementEngine {
         val speed: Int,
         val course: Int,
         val range: Int,
+        val rangeNmMm: Long,   // R4：毫米余额一并快照，否则 UndoMove 凭空漏油
         val pastLen: Int
     )
 
     /** G15：捕获单位当前状态为撤销快照（DoMove 前调用） */
     fun snapshotOf(u: Unit): ManualMoveSnapshot = ManualMoveSnapshot(
         x = u.x, y = u.y, speed = u.speed, course = u.course,
-        range = u.range, pastLen = u.pastWaypointArray.size
+        range = u.range, rangeNmMm = u.rangeNmMm, pastLen = u.pastWaypointArray.size
     )
 
     /** G15：从快照恢复单位状态（UndoMove；截断本步新增的轨迹点） */
@@ -282,6 +310,7 @@ object MovementEngine {
         u.speed = s.speed
         u.course = s.course
         u.range = s.range
+        u.rangeNmMm = s.rangeNmMm   // R4：恢复毫米余额镜像
         while (u.pastWaypointArray.size > s.pastLen) {
             u.pastWaypointArray.removeAt(u.pastWaypointArray.size - 1)
         }
@@ -304,11 +333,13 @@ object MovementEngine {
         if (distNm <= 0) return null
         var newRange = u.range
         if (u.range >= 0 && !u.ignoreRange) {
-            if (distNm >= u.range) {
-                distNm = u.range.toDouble()
+            if (u.rangeNmMm < 0) u.initRangeMmFromPersisted()
+            val needMm = (distNm * 1000.0).toLong()
+            if (needMm >= u.rangeNmMm) {
+                distNm = u.rangeNmMm / 1000.0
                 newRange = 0
             } else {
-                newRange = u.range - maxOf(0, distNm.roundToInt())
+                newRange = ((u.rangeNmMm - needMm) / 1000).toInt()
             }
         }
         val distFile = (distNm * CoordUtil.NMI_SCALE).toLong()
@@ -328,13 +359,17 @@ object MovementEngine {
     fun manualMoveStep(u: Unit, minutes: Double, gear: Double, curTime: String): Boolean {
         var distNm = u.speedKnots() * gear * minutes / 60.0
         if (distNm <= 0) return false
-        // Range 限制（-100000=无限制；0=已耗尽停止）——与回合引擎 E4 语义一致
+        // R4：毫米海里余额，与回合引擎一致（跨存盘用 RangeMm）
         if (u.range >= 0 && !u.ignoreRange) {
-            if (distNm >= u.range) {
-                distNm = u.range.toDouble()
-                u.range = 0
+            if (u.rangeNmMm < 0) u.initRangeMmFromPersisted()
+            val needMm = (distNm * 1000.0).toLong()
+            if (needMm >= u.rangeNmMm) {
+                distNm = u.rangeNmMm / 1000.0
+                u.rangeNmMm = 0
+                u.syncRangeIntFromMm()
             } else {
-                u.range -= maxOf(0, distNm.roundToInt())
+                u.rangeNmMm -= needMm
+                u.syncRangeIntFromMm()
             }
         }
         val distFile = (distNm * CoordUtil.NMI_SCALE).toLong()
@@ -347,104 +382,24 @@ object MovementEngine {
         return true
     }
 
-    // ============ 参考函数（保留供测试/文档引用；D9 后不再用于主移动路径） ============
-
-    data class TurnResult(val x: Long, val y: Long, val turnPoints: List<Pair<Long, Long>>, val actualCourse: Double)
-
-    /** 渐进式转向（Harpoon 纸质规则遗留，D9 后保留为参考工具，主移动路径不再调用） */
-    fun turnMotion(x: Long, y: Long, oldCourse: Double, newCourse: Double,
-                   distFile: Double, advanceFile: Double): TurnResult {
-        if (newCourse == oldCourse) {
-            val dx = distFile * sin(Math.toRadians(oldCourse))
-            val dy = distFile * cos(Math.toRadians(oldCourse))
-            return TurnResult(x + dx.roundToInt().toLong(), y + dy.roundToInt().toLong(), emptyList(), oldCourse)
-        }
-        val delta = minimalDelta(oldCourse, newCourse)
-        if (distFile <= 0) {
-            return TurnResult(x, y, emptyList(), oldCourse)
-        }
-        if (abs(delta) <= NO_ADVANCE_DEG) {
-            val dx = distFile * sin(Math.toRadians(newCourse))
-            val dy = distFile * cos(Math.toRadians(newCourse))
-            return TurnResult(x + dx.roundToInt().toLong(), y + dy.roundToInt().toLong(), emptyList(), newCourse)
-        }
-        val n = ceil(abs(delta) / 45.0).toInt()
-        val step = if (delta > 0) 45.0 else -45.0
-        var cx = x.toDouble(); var cy = y.toDouble()
-        var remaining = distFile
-        var cur = oldCourse
-        val points = mutableListOf<Pair<Long, Long>>()
-        for (i in 0 until n) {
-            if (remaining < advanceFile) {
-                val dx = remaining * sin(Math.toRadians(cur))
-                val dy = remaining * cos(Math.toRadians(cur))
-                return TurnResult((cx + dx).roundToInt().toLong(), (cy + dy).roundToInt().toLong(), points, cur)
-            }
-            val dx = advanceFile * sin(Math.toRadians(cur))
-            val dy = advanceFile * cos(Math.toRadians(cur))
-            cx += dx; cy += dy
-            points.add(cx.roundToInt().toLong() to cy.roundToInt().toLong())
-            remaining -= advanceFile
-            cur = (cur + step) % 360.0
-        }
-        val dx = remaining * sin(Math.toRadians(newCourse))
-        val dy = remaining * cos(Math.toRadians(newCourse))
-        return TurnResult((cx + dx).roundToInt().toLong(), (cy + dy).roundToInt().toLong(), points, newCourse)
-    }
-
-    /** 最小转向角（带符号） */
-    fun minimalDelta(oldCourse: Double, newCourse: Double): Double {
-        var d = (newCourse - oldCourse) % 360.0
-        if (d > 180) d -= 360.0
-        if (d < -180) d += 360.0
-        return d
-    }
-
+    /** 当前高度/深度（米 ×1000 定点原值；飞机取高度、潜艇取深度，均无则 0） */
     fun altDepthOf(u: Unit): Int = u.altitude ?: u.depth ?: 0
 
     private fun makeWaypoint(u: Unit, ts: String): Waypoint {
         return Waypoint(
+            name = u.name,
             x = u.x, y = u.y,
+            // P2-1 修复：轨迹点补齐 Speed/Course/AssignedAltDepth（此前只写 x/y，历史轨迹
+            // 航向航速恒 0，桌面版读取航迹时数据失真）——记录移动完成后的状态，与桌面
+            // TrackHistory 语义一致。
+            speed = u.speed,
+            course = u.course,
             altitudeDepth = altDepthOf(u),
-            number = 1, isTurnTime = true,
+            // FIX11/13：assignedAltDepth 仅对飞机/潜艇有意义；水面单位写 0（桌面 ArchiveFutureWaypoint 对水面为 0）
+            assignedAltDepth = if (u.altitude != null || u.depth != null) altDepthOf(u) else 0,
+            number = u.pastWaypointArray.size + 1,   // 递增序号（桌面 ArchiveFutureWaypoint 序号语义）
+            isTurnTime = true,
             positionTime = ts
         )
-    }
-}
-
-/** 尺寸等级能力表（保留供 boost/decel 一档加减速参考；D9 后无转向损失/无 75% 分档） */
-data class SizeLevel(
-    val accel: Double, val accelHigh: Double, val decel: Double,
-    val adv: Double, val loss: Double, val advEmer: Double, val lossEmer: Double
-)
-
-object SizeLevels {
-    val TABLE = mapOf(
-        "slowA" to SizeLevel(4.0, 2.0, 6.0, 400.0, 2.0, 300.0, 3.0),
-        "fastA" to SizeLevel(6.0, 3.0, 9.0, 400.0, 2.0, 300.0, 3.0),
-        "B" to SizeLevel(10.0, 5.0, 12.0, 300.0, 2.0, 200.0, 3.0),
-        "C" to SizeLevel(12.0, 6.0, 15.0, 300.0, 1.0, 200.0, 2.0),
-        "D" to SizeLevel(12.0, 6.0, 15.0, 200.0, 1.0, 100.0, 2.0),
-        "slowF" to SizeLevel(15.0, 8.0, 18.0, 100.0, 1.0, 50.0, 2.0),
-        "fastF" to SizeLevel(25.0, 12.0, 30.0, 100.0, 0.5, 50.0, 1.0)
-    )
-
-    val CLASS_DEFAULT = mapOf(
-        "BB" to "A", "BC" to "A", "CL" to "B", "CA" to "B", "CC" to "B",
-        "CV" to "B", "DD" to "C", "FF" to "F"
-    )
-
-    /** 尺寸级名（A/F 按最大航速分快慢） */
-    fun levelName(unitClass: String, maxSpeedKnots: Double?): String {
-        val lv = CLASS_DEFAULT[unitClass] ?: "B"
-        return when (lv) {
-            "A" -> if (maxSpeedKnots == null || maxSpeedKnots >= 25.0) "fastA" else "slowA"
-            "F" -> if (maxSpeedKnots == null || maxSpeedKnots >= 30.0) "fastF" else "slowF"
-            else -> lv
-        }
-    }
-
-    fun of(unit: com.simplot.android.data.model.Unit): SizeLevel {
-        return TABLE[levelName(unit.unitClass, unit.maxSpeedKnots)] ?: TABLE["B"]!!
     }
 }

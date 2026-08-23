@@ -116,13 +116,16 @@ object FogOfWar {
         val visible = visibleUnits(copy.units, side)
         copy.units = visible.toMutableList()
         copy.objects = visible.map { it.idNum }.toMutableList()
-        // 玩家视角：己方单位全知（清感知）；敌方可见单位按受限项脱敏
+        // W3 修复：侧文件保留触发可见的 Perception 记录（Mediterranean 实测 Red.SpScn 仍含 Perception）。
+        // 己方单位清感知（全知）；敌方可见单位脱敏后仅保留该侧的可见记录，避免下一轮可见性丢失。
         visible.forEach { unit ->
             if (unit.side == side) {
                 unit.perceptionArray = null
             } else {
                 applyRestrictions(unit, side)
-                unit.perceptionArray = null
+                // 仅保留 SeenBySide==side 的记录（触发可见的那条），其余感知清理；若过滤后为空则置 null（省略键）
+                val kept = unit.perceptionArray?.filter { p -> p.seenBySide == side || p.seenBySide.equals(side, ignoreCase = true) }
+                unit.perceptionArray = if (kept.isNullOrEmpty()) null else kept.toMutableList()
             }
         }
         copy.file = side

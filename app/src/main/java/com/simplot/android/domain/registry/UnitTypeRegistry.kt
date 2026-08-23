@@ -111,4 +111,28 @@ object UnitTypeRegistry {
         Domain.SONOBUOY -> SONOBUOY_TYPES
         Domain.UNKNOWN -> emptyList()
     }
+
+    /**
+     * P1-2 修复（G13 反向切换）：按目标大类重置单位的高度/深度维度。
+     *
+     * 语义：
+     * - AIR：清空深度，保留高度（高度由调用方单独写回）
+     * - SUBSURFACE：清空高度，保留深度
+     * - 其余（水面/设施/车辆/参考点/浮标/陆地编队等）：高度与深度均清空，回归水面语义
+     *
+     * 此前 UnitEditSheet 的显示条件以 unit.isAircraft()（altitude 非 null）判定恒 true，
+     * 且高度输入清空时 alt.isNotBlank() 为 false 不写回 → 飞机/潜艇永远无法改回水面单位。
+     * 本纯函数使该问题可 JVM 单测；就地修改并返回同一引用。
+     */
+    fun applyDomainDimensions(unit: Unit, domain: Domain): Unit {
+        when (domain) {
+            Domain.AIR -> unit.depth = null
+            Domain.SUBSURFACE -> unit.altitude = null
+            else -> {
+                unit.altitude = null
+                unit.depth = null
+            }
+        }
+        return unit
+    }
 }

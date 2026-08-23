@@ -55,8 +55,9 @@ object ScaleBar {
 
     /** 显示文本（1-2-5 序列 ≥1 均为整数不带小数；亚海里去尾零）：50 nmi / 2 nmi / 0.5 nmi / 0.05 nmi */
     fun label(nmi: Double): String {
-        val num = if (nmi >= 1) String.format("%.0f", nmi)
-        else String.format("%.2f", nmi).trimEnd('0').trimEnd('.')
+        // P3-3 修复（#15 覆盖不全）：显式 Locale.US，防德/法等 locale 输出逗号小数点
+        val num = if (nmi >= 1) String.format(java.util.Locale.US, "%.0f", nmi)
+        else String.format(java.util.Locale.US, "%.2f", nmi).trimEnd('0').trimEnd('.')
         return "$num nmi"
     }
 }

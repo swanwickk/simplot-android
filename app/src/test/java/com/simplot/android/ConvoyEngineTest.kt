@@ -68,6 +68,31 @@ class ConvoyEngineTest {
     }
 
     @Test
+    fun `convoy centered at injected world coords`() {
+        // #4 修复：GameViewModel 传视野中心（centerX/centerY），护航队不再整体落在 (0,0) 视野外
+        val f = ScenarioFile()
+        val units = ConvoyEngine.build(
+            f,
+            ConvoyEngine.ConvoySpec(escortCount = 6, distYards = 2000),
+            nextIdCounter(),
+            nextTrackNumberCounter(),
+            centerX = 50000, centerY = -30000
+        )
+        // 指挥舰落在注入的世界坐标
+        assertEquals(50000L, units[0].x)
+        assertEquals(-30000L, units[0].y)
+        // 商船在中心邻域内（环绕偏移 2000 码 ≈ 98752 文件单位；断言宽松邻域 + 不与原点混淆）
+        units.drop(1).forEach { m ->
+            assertTrue("商船 x=${m.x} 应在中心邻域", m.x in 50000L - 200000L..50000L + 200000L)
+            assertTrue("商船 y=${m.y} 应在中心邻域", m.y in -30000L - 200000L..-30000L + 200000L)
+        }
+        // 默认（不传中心）仍为原点（向后兼容）
+        val def = ConvoyEngine.build(f, ConvoyEngine.ConvoySpec(escortCount = 1), nextIdCounter(), nextTrackNumberCounter())
+        assertEquals(0L, def[0].x)
+        assertEquals(0L, def[0].y)
+    }
+
+    @Test
     fun `track numbers come from allocator sequentially`() {
         val f = ScenarioFile()
         val sides = mutableListOf<String>()

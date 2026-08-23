@@ -71,13 +71,44 @@ class AdvanceTurnUseCaseTest {
     }
 
     @Test
-    fun `final waypoint reached detected`() {
+    fun `final waypoint reached detected only when engine marked`() {
+        // P1-1 修复回归：hasReachedFinalWaypoint 读引擎精确标记 reachedFinalWaypoint，
+        // 而非旧过宽条件（无未来航路点 + 有历史轨迹 即误判）。
         val f = movingScenario()
-        // 构造：无未来航路点 + 有历史轨迹 → 视为到达最终航路点
-        f.units[0].pastWaypointArray.add(
-            com.simplot.android.data.model.Waypoint(x = 0, y = 0)
-        )
-        assertTrue(AdvanceTurnUseCase.hasReachedFinalWaypoint(f, "S001"))
+        // 未推进回合：标记为 false
+        assertFalse(AdvanceTurnUseCase.hasReachedFinalWaypoint(f, "S001"))
         assertFalse(AdvanceTurnUseCase.hasReachedFinalWaypoint(f, "NOPE"))
+        // 推进一回合：单位无未来航路点（从未设航线）→ 引擎精确标记仍为 false
+        AdvanceTurnUseCase.execute(f, TurnInterval(3, 0))
+        assertFalse(AdvanceTurnUseCase.hasReachedFinalWaypoint(f, "S001"))
+    }
+
+    @Test
+    fun `final waypoint reported only for unit that consumed last waypoint this turn`() {
+        // P1-1 修复回归：execute 的 finalWaypointReached 仅含"本回合消费最后一个未来航路点"的单位；
+        // 从未设航线的单位（历史有轨迹、当前无未来航路点）不得被误报。
+        val u1 = Unit(
+            idNum = "S001", side = "Blue", name = "DD-1", unitClass = "DD",
+            speed = 30000, course = 0, x = 0, y = 0, range = 1000   // 朝正北，0°=北
+        )
+        // 本回合到达并消费唯一未来航路点（正北 0.5 海里，30 节 × 3 分钟 = 1.5 海里足够）
+        u1.futureWaypointArray.add(
+            com.simplot.android.data.model.Waypoint(x = 0, y = 50000, number = 1, isTurnTime = true, positionTime = "2026-01-01 00:00:00")
+        )
+        val u2 = Unit(
+            idNum = "S002", side = "Blue", name = "DD-2", unitClass = "DD",
+            speed = 30000, course = 90000, x = 0, y = 100000, range = 1000
+        )
+        // 从未设航线：历史有轨迹、当前无未来航路点 → 不应被标记
+        u2.pastWaypointArray.add(
+            com.simplot.android.data.model.Waypoint(x = 0, y = 100000, number = 1, isTurnTime = true, positionTime = "2026-01-01 00:00:00")
+        )
+        val f = ScenarioFile(units = mutableListOf(u1, u2))
+        val r = AdvanceTurnUseCase.execute(f, TurnInterval(3, 0))
+        assertNotNull(r)
+        // S001 本回合消费了最后一个未来航路点 → 被报告
+        assertTrue("S001 本回合消费最后一个航路点应报告", r!!.finalWaypointReached.contains("S001"))
+        // S002 从未设航线 → 不得误报
+        assertFalse("S002 从未设航线不应误报", r.finalWaypointReached.contains("S002"))
     }
 }

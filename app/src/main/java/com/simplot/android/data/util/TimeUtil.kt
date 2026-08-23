@@ -13,9 +13,13 @@ object TimeUtil {
 
     fun parse(s: String): LocalDateTime = LocalDateTime.parse(s, FORMAT)
 
-    /** 推进时间：当前 + minutes（支持小数分钟，如 0.75 = 45 秒） */
+    /** 推进时间：当前 + minutes（支持小数分钟，如 0.75 = 45 秒）；脏时间回原值并打 log（T1：避免 now 跳变，回原值+logError语义由调用方 GameViewModel.logError 兜底） */
     fun advance(positionTime: String, minutes: Double): String {
-        val base = parse(positionTime)
+        val base = try { parse(positionTime) } catch (_: Exception) { parseLenient(positionTime) }
+        if (base == null) {
+            try { android.util.Log.e("TimeUtil", "advance: invalid positionTime='$positionTime', return original") } catch (_: Exception) {}
+            return positionTime
+        }
         val wholeMins = minutes.toInt()
         val secs = ((minutes - wholeMins) * 60.0).toInt()
         return base.plusMinutes(wholeMins.toLong()).plusSeconds(secs.toLong()).format(FORMAT)

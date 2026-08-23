@@ -64,6 +64,12 @@ class MapDataParser {
     /** 国家名 (text, x, y) */
     val countryLabels = mutableListOf<Triple<String, Long, Long>>()
 
+    /** 光栅地图 CITY 原始像素 (名称, px, py)——图片加载后经 [applyRasterCenter] 转世界坐标 */
+    val rasterCityPixels = mutableListOf<Triple<String, Double, Double>>()
+
+    /** 光栅地图 COUNTRY 原始像素 (名称, px, py)——图片加载后经 [applyRasterCenter] 转世界坐标 */
+    val rasterCountryPixels = mutableListOf<Triple<String, Double, Double>>()
+
     /** 深度色带 (点列表, 级别 0-4) */
     val depthPolys = mutableListOf<Pair<List<Pair<Long, Long>>, Int>>()
 
@@ -103,7 +109,10 @@ class MapDataParser {
             }
         }
         root.get("BackgroundFileName")?.takeIf { !it.isJsonNull }?.let {
-            pendingBackgroundName = it.asString
+            val bg = it.asString.trim()
+            if (bg.isNotBlank() && !bg.equals("None", ignoreCase = true)) {
+                pendingBackgroundName = bg
+            }
         }
         // ---- 旧版 NewMap 键（保持兼容，缺变体键的老文件不崩、行为回退） ----
         parsePolygons(root.getAsJsonArray("Land Polygons")) { pts, idx -> landPolys.add(pts) }
@@ -149,6 +158,7 @@ class MapDataParser {
         waterLabels.clear(); cityLabels.clear(); countryLabels.clear()
         cityPositions.clear(); waterIsMajor.clear()
         depthPolys.clear(); borderPolys.clear(); depthTexts.clear()
+        rasterCityPixels.clear(); rasterCountryPixels.clear()
         pendingBackgroundName = null
     }
 
@@ -156,32 +166,39 @@ class MapDataParser {
      * R5：光栅地图 .map/.txt 解析（桌面版 MercatorRaster.LoadMapData）。
      * 每行 "KEY = ***"：
      * - MAP = 光栅图片文件名（png/jpg）
-     * - SCALE = 比例尺（Double，桌面 ConvertDouble 本地化解析）
+     * - SCALE = 比例尺（Double，桌面 ConvertDouble 本地化解析；语义：像素/海里 的缩放倍率）
      * - CITY = 城市名|像素X|像素Y（多个 CITY 行）
      * - COUNTRY = 国家名|像素X|像素Y
-     * R6 修复（D4 决策）：桌面 LoadMapData 第 4 步 "SimPlotX/Y ← 像素 / Scale"（**除法**），
-     * 与矢量地图坐标同为海里×10000 → 再 ×10 转存档坐标（海里×100000）。
+     *
+     * 桌面语义（用户实测校准）：
+     * - 底图**中心**位于世界坐标 (0,0)；
+     * - SCALE 是像素↔海里的倍率：1 像素 = 1/SCALE 海里 = 100000/SCALE 存档坐标单位；
+     * - CITY/COUNTRY 的像素坐标按「以图片中心为原点」换算世界坐标
+     *   （本例：图 1160×704、SCALE=20.3 → 世界范围约 ±5.71M×±3.47M 存档单位，与场景单位跨度量级吻合）。
+     *
+     * 由于解析时图片尚未加载（未知宽高），本方法只记录像素坐标，
+     * 图片加载后由 [applyRasterCenter] 统一换算为世界坐标。
+     *
      * @param pendingMapName 输出参数：解析到的 MAP 文件名（调用方据此加载图片）
      * @return 是否解析到 SCALE（无 SCALE 时城市/国家坐标无法换算）
      */
     fun parseRasterMap(text: String, pendingMapName: StringBuilder? = null): Boolean {
+        clear()
         val map = Regex("(?m)^MAP\\s*=\\s*(.+)\\s*$").find(text)?.groupValues?.get(1)?.trim()
         val scale = Regex("(?m)^SCALE\\s*=\\s*([\\d.,]+)\\s*$").find(text)?.groupValues?.get(1)
             ?.replace(",", ".")?.toDoubleOrNull()
         if (map != null) pendingMapName?.append(map)
         if (scale == null || scale <= 0.0) return false
+        mapScale = scale
 
-        // R6：桌面语义 = 像素 ÷ Scale（得到海里×10000 地图坐标），再 ×10 转存档坐标
-        // 例：px=100, scale=3.071 → 32.6（地图单位）→ 326 存档单位
-        fun toWorld(px: Double): Long = (px / scale * 10).roundToLong()
-
+        // 仅记录像素坐标（以图片左上角为原点的原始像素），中心化换算延后到图片加载后
         Regex("(?m)^CITY\\s*=\\s*(.+)$").findAll(text).forEach { m ->
             val parts = m.groupValues[1].split("|")
             if (parts.size >= 3) {
                 val name = parts[0].trim()
                 val px = parts[1].trim().toDoubleOrNull() ?: return@forEach
                 val py = parts[2].trim().toDoubleOrNull() ?: return@forEach
-                cityLabels.add(Triple(name, toWorld(px), toWorld(py)))
+                rasterCityPixels.add(Triple(name, px, py))
             }
         }
         Regex("(?m)^COUNTRY\\s*=\\s*(.+)$").findAll(text).forEach { m ->
@@ -190,10 +207,29 @@ class MapDataParser {
                 val name = parts[0].trim()
                 val px = parts[1].trim().toDoubleOrNull() ?: return@forEach
                 val py = parts[2].trim().toDoubleOrNull() ?: return@forEach
-                countryLabels.add(Triple(name, toWorld(px), toWorld(py)))
+                rasterCountryPixels.add(Triple(name, px, py))
             }
         }
         return true
+    }
+
+    /**
+     * 光栅地图中心化换算：图片加载后调用。
+     * 底图中心 = 世界 (0,0)；像素 (px,py) → 世界
+     *   wx = (px - W/2) / SCALE × 100000
+     *   wy = (H/2 - py) / SCALE × 100000   （Y 翻转：图片向下 → 世界向北）
+     * @param imgW 底图像素宽
+     * @param imgH 底图像素高
+     */
+    fun applyRasterCenter(imgW: Int, imgH: Int) {
+        val s = mapScale
+        if (s <= 0.0 || imgW <= 0 || imgH <= 0) return
+        fun toWorldX(px: Double): Long = ((px - imgW / 2.0) / s * 100000.0).roundToLong()
+        fun toWorldY(py: Double): Long = ((imgH / 2.0 - py) / s * 100000.0).roundToLong()
+        cityLabels.clear()
+        for ((n, px, py) in rasterCityPixels) cityLabels.add(Triple(n, toWorldX(px), toWorldY(py)))
+        countryLabels.clear()
+        for ((n, px, py) in rasterCountryPixels) countryLabels.add(Triple(n, toWorldX(px), toWorldY(py)))
     }
 
     private fun parseBoundary(root: JsonObject) {
