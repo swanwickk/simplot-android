@@ -261,7 +261,8 @@ fun SceneCanvas(
                 // 被动方位线（R4：ShowSonar / ShowEs 开关）
                 com.simplot.android.render.BearingRenderer.draw(
                     drawContext.canvas.nativeCanvas, u, camera, w, h,
-                    showSonar = settings.showSonar, showEs = settings.showEs
+                    showSonar = settings.showSonar, showEs = settings.showEs,
+                    allUnits = file.units
                 )
             }
         }
@@ -460,7 +461,8 @@ private fun drawUnitLabel(
     if (effClass && u.unitClass.isNotEmpty()) parts.add(u.unitClass)
     if (effUnitType && u.unitType.isNotEmpty()) parts.add(u.unitType)
     if (effCS) {
-        parts.add("Course ${u.courseDeg().toInt()}°  Speed ${u.speedKnots().toInt()} kts")
+        // 反馈㉕：紧凑格式 "190°/28kts"（桌面无 Course/Speed 字样前缀）
+        parts.add("${u.courseDeg().toInt()}°/${u.speedKnots().toInt()}kts")
     }
     if (effAlt && u.altitude != null) parts.add("Alt ${u.altitudeMeters()} m")
     if (effDepth && u.depth != null) parts.add("Depth ${u.depthMeters()} m")
