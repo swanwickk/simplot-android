@@ -470,15 +470,8 @@ private fun drawUnitLabel(
     if (text.isNotEmpty()) {
         val tx = sx + 10f * k
         val ty = sy - 8f * k
-        // G08：CheckBackground —— 文字下垫背景色矩形（桌面签名："Use background color under labels"）
-        if (useLabelBackground) {
-            val tw = paint.measureText(text)
-            // #9：复用池画笔（背景矩形，改色即用）
-            // FIX-LABEL v2（反馈㉓）：背景改回全不透明——半透明底在地图上透出等高线/航线造成文字难读；
-            // 颜色取用户设置的背景色（RGB + 原 Alpha 位）。需要无遮挡可在设置中关闭标签背景。
-            val bg = ScenePaintPool.labelBg.apply { color = backgroundColor.toInt() }
-            canvas.drawRect(tx - 4f, ty - paint.textSize + 2f, tx + tw + 4f, ty + 3f, bg)
-        }
+        // G08/反馈㉓更正：标签背景**全透明**——不绘制任何底色矩形（此前误解为改不透明）。
+        // useLabelBackground 开关保留在设置中但当前语义=无底色；文字可读性由描边兜底。
         canvas.drawText(text, tx, ty, paint)
     }
 }
