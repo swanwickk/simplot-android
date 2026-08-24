@@ -93,7 +93,10 @@ fun queryTreeDisplayName(context: Context, dirUri: Uri?): String? {
             arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
             null, null, null
         )?.use { cursor ->
-            if (cursor.moveToFirst()) cursor.getString(cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) else null
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                if (idx >= 0) cursor.getString(idx) else null
+            } else null
         }
     } catch (e: Exception) {
         null
