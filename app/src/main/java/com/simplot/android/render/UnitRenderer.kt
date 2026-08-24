@@ -74,10 +74,14 @@ object UnitRenderer {
     const val LABEL_BASE_ZOOM = 0.0015f
 
     /**
-     * 标签字号（反馈⑥/契约6/反馈㉑）：基准 24f→32f（真机反馈整体仍偏小），
-     * 随 zoom 等比缩放，clamp [24f, 64f]。
+     * 标签字号（反馈⑥/契约6/反馈㉑/反馈㉒）：真机 density 感知，基准 20sp*d（默认 zoom），
+     * 随 zoom 等比缩放，clamp [16sp*d, 40sp*d]。
+     * 单测环境 appContext==null → d=1f，纯函数直接可单测。
      */
-    fun labelTextSize(zoom: Float): Float = (32f * (zoom / LABEL_BASE_ZOOM)).coerceIn(24f, 64f)
+    fun labelTextSize(zoom: Float): Float {
+        val d = appContext?.resources?.displayMetrics?.density ?: 1f
+        return (20f * (zoom / LABEL_BASE_ZOOM) * d).coerceIn(16f * d, 40f * d)
+    }
 
     /** 标签锚点偏移系数（反馈⑥）：zoom/LABEL_BASE_ZOOM，clamp [0.7f, 2.5f]（偏移规则本身不变） */
     fun labelScaleK(zoom: Float): Float = (zoom / LABEL_BASE_ZOOM).coerceIn(0.7f, 2.5f)
