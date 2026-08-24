@@ -474,11 +474,9 @@ private fun drawUnitLabel(
         if (useLabelBackground) {
             val tw = paint.measureText(text)
             // #9：复用池画笔（背景矩形，改色即用）
-            // FIX-LABEL：背景改半透明（alpha≈33%），避免实心白底遮挡单位符号；
-            // 颜色仍取用户设置（RGB 部分），透明度固定 0x55。设为完全无遮挡可在设置中关闭标签背景。
-            val argb = backgroundColor.toInt()
-            val semi = (0x55000000 or (argb and 0x00FFFFFF)).toInt()
-            val bg = ScenePaintPool.labelBg.apply { color = semi }
+            // FIX-LABEL v2（反馈㉓）：背景改回全不透明——半透明底在地图上透出等高线/航线造成文字难读；
+            // 颜色取用户设置的背景色（RGB + 原 Alpha 位）。需要无遮挡可在设置中关闭标签背景。
+            val bg = ScenePaintPool.labelBg.apply { color = backgroundColor.toInt() }
             canvas.drawRect(tx - 4f, ty - paint.textSize + 2f, tx + tw + 4f, ty + 3f, bg)
         }
         canvas.drawText(text, tx, ty, paint)
