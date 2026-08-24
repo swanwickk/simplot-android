@@ -24,8 +24,8 @@ android {
         applicationId = "com.simplot.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 36
-        versionName = "0.7.4"
+        versionCode = 37
+        versionName = "0.7.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
