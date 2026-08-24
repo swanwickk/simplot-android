@@ -137,6 +137,19 @@ object BearingRenderer {
     }
 
     /**
+     * 计算无限探测距离时的屏显射线长度（纯函数可单测）：
+     * 动态根据本舰屏幕坐标 (cx, cy) 与当前视口尺寸，计算出能够完全贯穿并穿透整个屏幕的长度，
+     * 保证放大到任意倍数（即使本舰远在屏幕外几万像素）射线与扇区也绝不消失。
+     */
+    fun infiniteBeamLenPx(cx: Float, cy: Float, canvasW: Int, canvasH: Int): Float {
+        val screenMidX = canvasW / 2f
+        val screenMidY = canvasH / 2f
+        val distToCenter = kotlin.math.hypot(cx - screenMidX, cy - screenMidY)
+        val screenDiag = kotlin.math.hypot(canvasW.toFloat(), canvasH.toFloat())
+        return (distToCenter + screenDiag * 2.0f + 2000f).coerceAtLeast(5000f)
+    }
+
+    /**
      * 被动方位线（桌面版 PassiveBearings.Draw）。
      * R4：受 ShowSonar（Type="Sonar"）与 ShowEs（Type="ES" 等）开关控制。
      * 颜色按 ShowAsSide（目标阵营）分派：蓝方=蓝、红方=红、未知=黄（桌面反编译分支实测），
@@ -171,9 +184,12 @@ object BearingRenderer {
             // #9：复用池画笔，按需改色
             val paint = linePaint.apply { color = baseColor }
             val rad = Math.toRadians(effBearing)
-            // 屏显长度：BeamLength(海里)×zoom；0/未填表示探测距离无限（延伸覆盖整个海图视野）
-            val maxViewDim = maxOf(canvasW.toFloat(), canvasH.toFloat()) * 3f
-            val lenPx = if (b.beamLength > 0) (b.beamLength * 100000.0 * camera.zoom).toFloat() else maxOf(3000f, maxViewDim)
+            // 屏显长度：BeamLength(海里)×zoom；0/未填表示探测距离无限（动态延伸贯穿当前屏幕视野，即便放大后单位远在屏外几万像素也必然穿透屏幕）
+            val lenPx = if (b.beamLength > 0) {
+                (b.beamLength * 100000.0 * camera.zoom).toFloat()
+            } else {
+                infiniteBeamLenPx(cx, cy, canvasW, canvasH)
+            }
 
             if (b.beamWidth > 0.0) {
                 // G45/反馈㉗：波束宽度 >0 时画扇形填充 + 两侧误差边界线（不画中间多余黄线）

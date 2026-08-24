@@ -127,4 +127,20 @@ class BearingArrayAndCalcBearingTest {
         assertEquals(77.0, BearingRenderer.bearingOf(77.0, "NOPE", 10.0, listOf(owner), owner), 1e-9)
         assertEquals(77.0, BearingRenderer.bearingOf(77.0, "", 10.0, emptyList(), owner), 1e-9)
     }
+
+    // ---- 无限探测距离屏显长度（放大不消失） ----
+
+    @Test
+    fun `infiniteBeamLenPx always reaches across screen even when unit is far off screen`() {
+        val w = 1080
+        val h = 2000
+        // 单位在屏幕中心
+        val lenOnScreen = BearingRenderer.infiniteBeamLenPx(540f, 1000f, w, h)
+        assertTrue("在屏内时保底应 >= 5000px", lenOnScreen >= 5000f)
+
+        // 放大后单位远在屏幕外 30,000 像素
+        val lenOffScreen = BearingRenderer.infiniteBeamLenPx(-20000f, -20000f, w, h)
+        val distToScreenCenter = kotlin.math.hypot(-20000f - 540f, -20000f - 1000f)
+        assertTrue("必须大于到屏幕中心的距离，保证贯穿整个屏幕", lenOffScreen > distToScreenCenter + 2000f)
+    }
 }
