@@ -1,12 +1,18 @@
 package com.simplot.android.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -24,9 +30,12 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.simplot.android.data.codec.ArcColorCodec
 import com.simplot.android.data.model.Sensor
 import com.simplot.android.data.model.Unit
 import com.simplot.android.data.model.Weapon
@@ -143,6 +152,7 @@ private fun ArcRow(
     var startText by remember(startAngle) { mutableStateOf(startAngle.toString()) }
     var arcText by remember(arcAngle) { mutableStateOf(arcAngle.toString()) }
     var colorText by remember(color) { mutableStateOf(color) }
+    var pickingColor by remember { mutableStateOf(false) }
     var isFilled by remember(filled) { mutableStateOf(filled) }
     var isVisible by remember(visible) { mutableStateOf(visible) }
 
@@ -175,14 +185,42 @@ private fun ArcRow(
                 label = { Text("ArcAngle") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(start = 4.dp))
         }
-        Row {
+        val parsed = ArcColorCodec.tryParseVbColor(colorText)
+        val previewLong = (parsed ?: ArcColorCodec.DEFAULT_COLOR).toLong() and 0xFFFFFFFFL
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = isFilled, onCheckedChange = { isFilled = it; commit() })
             Text("填充")
             Checkbox(checked = isVisible, onCheckedChange = { isVisible = it; commit() })
             Text("显示")
-            OutlinedTextField(value = colorText, onValueChange = { colorText = it; commit() },
-                label = { Text("颜色(&hRRGGBB)") }, singleLine = true,
-                modifier = Modifier.weight(1f))
+            // 颜色：可视化选色（预设色板 + HSV）；非法代码回退默认色并提示
+            Box(
+                Modifier
+                    .weight(1f)
+                    .padding(horizontal = 4.dp)
+                    .size(26.dp)
+                    .border(1.dp, Color(0xFF666666), CircleShape)
+                    .background(Color(previewLong), CircleShape)
+                    .clickable { pickingColor = true }
+            )
+            TextButton(onClick = { pickingColor = true }) { Text("选色") }
+        }
+        if (parsed == null) {
+            Text(
+                "颜色代码无效，已回退默认色",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        if (pickingColor) {
+            ColorPickerDialog(
+                title = "选择颜色（$label）",
+                current = previewLong,
+                onPick = { c ->
+                    colorText = ArcColorCodec.toVbColor(c.toInt())
+                    commit()
+                },
+                onDismiss = { pickingColor = false }
+            )
         }
         Row {
             TextButton(onClick = { onMoveUp?.invoke() }, enabled = onMoveUp != null) { Text("↑") }

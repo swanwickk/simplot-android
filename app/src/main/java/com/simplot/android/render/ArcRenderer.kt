@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import com.simplot.android.data.codec.ArcColorCodec
 import com.simplot.android.data.model.Unit
 
 /**
@@ -32,20 +33,9 @@ import com.simplot.android.data.model.Unit
  */
 object ArcRenderer {
 
-    /** VB 颜色 "&h00RRGGBB" → Android Color（不透明）；缺失时回退桌面版默认 黄色 0xFFFF00 */
-    fun parseColor(vb: String?): Int {
-        if (vb == null) return Color.rgb(255, 255, 0)
-        val hex = vb.removePrefix("&h").removePrefix("&H")
-        return try {
-            val v = hex.toLong(16)
-            val r = ((v shr 16) and 0xFF).toInt()
-            val g = ((v shr 8) and 0xFF).toInt()
-            val b = (v and 0xFF).toInt()
-            Color.rgb(r, g, b)
-        } catch (e: Exception) {
-            Color.rgb(255, 255, 0)
-        }
-    }
+    /** VB 颜色 "&h00RRGGBB" → Android Color（不透明）；缺失/非法时回退桌面版默认 黄色 0xFFFF00。
+     *  委托 ArcColorCodec 统一实现（与选色器共用，防两套解析漂移）；语义与原实现逐位等价。 */
+    fun parseColor(vb: String?): Int = ArcColorCodec.parseVbColor(vb)
 
     // ---- P3-1：复用画笔/路径（主线程串行绘制，字段复用无并发冲突） ----
     private val arcPaint by lazy { Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f } }
@@ -81,8 +71,9 @@ object ArcRenderer {
         headingRad: Double, filled: Boolean, vbColor: String?, camera: Camera
     ) {
         if (maxRangeNm <= 0) return
-        // R1 修复：ArcAngle=0 是 0 度退化弧（桌面语义，整圆 = ArcAngle 360），不绘制
-        if (arcAngle <= 0.0) return
+        // R1-v2 修复（桌面反编译 DrawSensors 实测语义）：ArcAngle=0 表示整圆
+        // （雷达环 FC L/M/S 等典型存档均为 ArcAngle=0 的整圈），仅负值视为无效弧不绘制。
+        val sweep = if (arcAngle < 0.0) return else arcAngle.toFloat()
         val color = parseColor(vbColor)
         val radiusMax = (maxRangeNm * 100000.0 * camera.zoom).toFloat()
         val radiusMin = (minRangeNm * 100000.0 * camera.zoom).toFloat()
@@ -97,7 +88,6 @@ object ArcRenderer {
         // 弧：从 (航向+StartAngle) 顺时针扫 ArcAngle 度
         // Android drawArc: startAngle 0=3点钟方向，顺时针为正；罗盘 0=北（画布上方），需 -90 偏移
         val startDeg = Math.toDegrees(headingRad).toFloat() - 90f + startAngle.toFloat()
-        val sweep = arcAngle.toFloat()
 
         if (filled) {
             // R2 修复：MinRange>0 时画 min~max 双半径环带（桌面 DrawSensorArc 逐点双半径路径）；

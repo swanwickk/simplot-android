@@ -50,7 +50,9 @@ fun UnitEditSheet(
     onDelete: (Unit) -> kotlin.Unit,
     onShowAsSunk: (Unit) -> kotlin.Unit = {},
     onCopy: (Unit) -> kotlin.Unit = {},
-    onDismiss: () -> kotlin.Unit
+    onDismiss: () -> kotlin.Unit,
+    // 被动方位 Emitter 候选：当前剧本全部单位（玩家从下拉选取，不再手输 IdNum）
+    allUnits: List<Unit> = emptyList()
 ) {
     // 反馈⑨：航向/航速纯数字输入（去掉滑杆；文本与数值双向同步，非法输入保留上次有效值）
     var course by remember { mutableFloatStateOf(unit.courseDeg().toFloat()) }
@@ -279,6 +281,7 @@ fun UnitEditSheet(
                     key(idx) {
                         PassiveBearingRow(
                             bearing = b,
+                            allUnits = allUnits,
                             onChange = { updated ->
                                 bearings = bearings.mapIndexed { i, old -> if (i == idx) updated else old }
                                 bearingsDirty = true
@@ -686,7 +689,8 @@ private fun ShowAsDropdown(
 private fun PassiveBearingRow(
     bearing: com.simplot.android.data.model.PassiveBearing,
     onChange: (com.simplot.android.data.model.PassiveBearing) -> kotlin.Unit,
-    onDelete: () -> kotlin.Unit
+    onDelete: () -> kotlin.Unit,
+    allUnits: List<Unit> = emptyList()
 ) {
     var type by remember { mutableStateOf(bearing.type) }
     var bearingText by remember { mutableStateOf(formatCourseSpeed(bearing.bearing)) }
@@ -745,10 +749,16 @@ private fun PassiveBearingRow(
                 singleLine = true, modifier = Modifier.weight(1f)
             )
         }
-        OutlinedTextField(
-            value = emitter, onValueChange = { emitter = it; emit() },
-            label = { Text("Emitter（目标 IdNum）") },
-            singleLine = true, modifier = Modifier.fillMaxWidth()
+        // Emitter：剧本单位下拉选择（自动读取当前场景全部单位，不再手输 IdNum）
+        ShowAsDropdown(
+            label = if (emitter.isNotBlank()) "Emitter（$emitter）" else "Emitter",
+            options = allUnits.map { u ->
+                val disp = u.callsignOrName().ifBlank { u.idNum }
+                "$disp (${u.idNum})" to u.idNum
+            },
+            selected = emitter,
+            onSelect = { emitter = it; emit() },
+            modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
             value = label, onValueChange = { label = it; emit() },

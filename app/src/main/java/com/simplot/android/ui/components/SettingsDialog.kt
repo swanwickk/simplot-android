@@ -231,18 +231,7 @@ private fun ErrorLogDialog(
     )
 }
 
-/** 预设色板（G09 选色器）：桌面默认 6 色 + 常用色 + 各键变体 */
-private val COLOR_PRESETS: List<Long> = listOf(
-    0xFFF0F2F5, 0xFF1A1A2E, 0xFF102030, 0xFFE8E0D0,
-    0xFF000000, 0xFFFFFFFF, 0xFF808080, 0xFF404040,
-    0xFF005AC8, 0xFF1E5AA8, 0xFF2040A0, 0xFF006080,
-    0xFFC81E1E, 0xFFA02020, 0xFFB03030, 0xFF801010,
-    0xFF96AA82, 0xFF6B8F5A, 0xFFC8DCE8, 0xFFA8C8D8,
-    0x883C789C, 0x44444444, 0x88FFFFFF, 0x88555555,
-    0xFF40C040, 0xFFFFA000, 0xFFA040C0, 0xFFC06020
-)
-
-/** 颜色编辑行（G09）：标签 + 当前色块 + 点击打开选色器 */
+/** 颜色编辑行（G09）：标签 + 当前色块 + 点击打开共享选色器 */
 @Composable
 private fun ColorEditRow(label: String, current: Long, onClick: () -> kotlin.Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -257,40 +246,6 @@ private fun ColorEditRow(label: String, current: Long, onClick: () -> kotlin.Uni
         )
         TextButton(onClick = onClick) { Text("选色") }
     }
-}
-
-/** G09：选色弹窗（预设色网格，当前色高亮边框；点选即回调并关闭） */
-@Composable
-private fun ColorPickerDialog(
-    title: String,
-    current: Long,
-    onPick: (Long) -> kotlin.Unit,
-    onDismiss: () -> kotlin.Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                COLOR_PRESETS.chunked(4).forEach { rowColors ->
-                    Row {
-                        rowColors.forEach { c ->
-                            val selected = c == current
-                            Box(
-                                Modifier
-                                    .padding(4.dp)
-                                    .size(38.dp)
-                                    .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else Color(0xFF999999), CircleShape)
-                                    .background(Color(c), CircleShape)
-                                    .clickable { onPick(c) }
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
 }
 
 @Composable

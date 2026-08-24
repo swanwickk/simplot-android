@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.simplot.android.data.model.ScenarioFile
 import com.simplot.android.engine.TurnState
 
@@ -57,28 +58,28 @@ fun BottomCommandBar(
                 FilledTonalButton(
                     onClick = onReplay,
                     modifier = Modifier.weight(1f)
-                ) { Text("退出回放") }
+                ) { Text("退出回放", fontSize = 13.sp, maxLines = 1) }
             } else {
                 FilledTonalButton(
                     onClick = onDo,
                     enabled = canDo,
                     modifier = Modifier.weight(1f)
-                ) { Text("▶ Do") }
+                ) { Text("Do", fontSize = 13.sp, maxLines = 1) }
                 OutlinedButton(
                     onClick = onUndo,
                     enabled = canUndo,
                     modifier = Modifier.weight(1f)
-                ) { Text("↩ Undo") }
+                ) { Text("Undo", fontSize = 13.sp, maxLines = 1) }
                 OutlinedButton(
                     onClick = onNext,
                     enabled = canNext,
                     modifier = Modifier.weight(1f)
-                ) { Text("✓ Next") }
+                ) { Text("Next", fontSize = 13.sp, maxLines = 1) }
             }
             OutlinedButton(
                 onClick = onMeasure,
                 modifier = Modifier.weight(1f)
-            ) { Text(if (measureMode) "退出测量" else "测量") }
+            ) { Text(if (measureMode) "退出测量" else "测量", fontSize = 13.sp, maxLines = 1) }
         }
     }
 }

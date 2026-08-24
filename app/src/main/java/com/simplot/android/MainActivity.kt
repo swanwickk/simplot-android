@@ -57,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.simplot.android.data.util.unitDistances
 import com.simplot.android.data.model.Unit as SimUnit
@@ -436,7 +437,8 @@ class MainActivity : ComponentActivity() {
                 onShowAsSunk = { vm.showAsSunk(it); vm.editUnit = null },
                 // G29：复制 → 剪贴板（不再立即生成副本；Paste 放置时防撞号分配）
                 onCopy = { vm.copyUnitToClipboard(it) },
-                onDismiss = { vm.editUnit = null }
+                onDismiss = { vm.editUnit = null },
+                allUnits = vm.file?.units ?: emptyList()
             )
         }
 
@@ -933,11 +935,11 @@ class MainActivity : ComponentActivity() {
                     Button(onClick = onReplay, modifier = Modifier.weight(1f)) { Text("退出回放") }
                     Button(onClick = onMeasure, modifier = Modifier.weight(1f)) { Text(if (measureMode) "退出测量" else "测量") }
                 } else {
-                    Button(onClick = onDo, enabled = canDo, modifier = Modifier.weight(1f)) { Text("▶ Do") }
-                    Button(onClick = onUndo, enabled = canUndo, modifier = Modifier.weight(1f)) { Text("↩ Undo") }
-                    Button(onClick = onNext, enabled = canNext, modifier = Modifier.weight(1f)) { Text("✓ Next") }
-                    Button(onClick = onMeasure, modifier = Modifier.weight(1f)) { Text(if (measureMode) "退出测量" else "测量") }
-                    Button(onClick = onReplay, modifier = Modifier.weight(1f)) { Text("回放") }
+                    Button(onClick = onDo, enabled = canDo, modifier = Modifier.weight(1f)) { Text("Do", fontSize = 13.sp, maxLines = 1) }
+                    Button(onClick = onUndo, enabled = canUndo, modifier = Modifier.weight(1f)) { Text("Undo", fontSize = 13.sp, maxLines = 1) }
+                    Button(onClick = onNext, enabled = canNext, modifier = Modifier.weight(1f)) { Text("Next", fontSize = 13.sp, maxLines = 1) }
+                    Button(onClick = onMeasure, modifier = Modifier.weight(1f)) { Text(if (measureMode) "退出测量" else "测量", fontSize = 13.sp, maxLines = 1) }
+                    Button(onClick = onReplay, modifier = Modifier.weight(1f)) { Text("回放", fontSize = 13.sp, maxLines = 1) }
                 }
             }
         }

@@ -100,10 +100,11 @@ fun NewScenarioDialog(
                 // ---- 3. 地图选择（桌面 PushMap；触屏走 SAF 文件选择） ----
                 Text("地图", style = MaterialTheme.typography.titleSmall)
                 if (mapFileName.isNullOrBlank()) {
-                    Text("未选择地图（TypeOfMap=0）", style = MaterialTheme.typography.bodyMedium)
+                    Text("未选择地图", style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     Text(
-                        "已选：$mapFileName（TypeOfMap=1）",
+                        "已选：$mapFileName",
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 2
                     )
