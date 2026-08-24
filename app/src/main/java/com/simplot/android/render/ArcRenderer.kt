@@ -37,6 +37,14 @@ object ArcRenderer {
      *  委托 ArcColorCodec 统一实现（与选色器共用，防两套解析漂移）；语义与原实现逐位等价。 */
     fun parseColor(vb: String?): Int = ArcColorCodec.parseVbColor(vb)
 
+    /**
+     * R1-v3：ArcAngle → drawArc 扫描角。
+     * 桌面语义（反编译 DrawSensors 确认）：0 = 整圆 360°；负值 = 无效弧返回 null 不绘制；
+     * 正值原样。纯 Kotlin 顶层函数，JVM 单测锁定（ArcSweepSemanticsTest）。
+     */
+    fun sweepOf(arcAngle: Double): Float? =
+        if (arcAngle < 0.0) null else if (arcAngle == 0.0) 360f else arcAngle.toFloat()
+
     // ---- P3-1：复用画笔/路径（主线程串行绘制，字段复用无并发冲突） ----
     private val arcPaint by lazy { Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f } }
     private val ringPath by lazy { Path() }
@@ -71,9 +79,10 @@ object ArcRenderer {
         headingRad: Double, filled: Boolean, vbColor: String?, camera: Camera
     ) {
         if (maxRangeNm <= 0) return
-        // R1-v2 修复（桌面反编译 DrawSensors 实测语义）：ArcAngle=0 表示整圆
-        // （雷达环 FC L/M/S 等典型存档均为 ArcAngle=0 的整圈），仅负值视为无效弧不绘制。
-        val sweep = if (arcAngle < 0.0) return else arcAngle.toFloat()
+        // R1-v3 修复（桌面反编译 DrawSensors 实测语义）：ArcAngle=0 表示整圆（360°），
+        // 典型存档雷达环 FC L/M/S 均为 ArcAngle=0；负角度才视为无效弧不绘制。
+        // v0.7.5-arcfix2 只取消了提前 return，sweep 仍为 0° → drawArc 扫 0 度等于没画，真因在此。
+        val sweep = sweepOf(arcAngle) ?: return
         val color = parseColor(vbColor)
         val radiusMax = (maxRangeNm * 100000.0 * camera.zoom).toFloat()
         val radiusMin = (minRangeNm * 100000.0 * camera.zoom).toFloat()
