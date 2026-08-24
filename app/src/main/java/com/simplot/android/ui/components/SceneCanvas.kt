@@ -258,11 +258,12 @@ fun SceneCanvas(
         if (!replaying) {
             for (u in viewUnits) {
                 ArcRenderer.draw(drawContext.canvas.nativeCanvas, u, camera, w, h, settings.showSensors, settings.showWeapons)
-                // 被动方位线（R4：ShowSonar / ShowEs 开关）
+                // 被动方位线（R4：ShowSonar / ShowEs 开关；颜色按 ShowAsSide 分派读 palette）
                 com.simplot.android.render.BearingRenderer.draw(
                     drawContext.canvas.nativeCanvas, u, camera, w, h,
                     showSonar = settings.showSonar, showEs = settings.showEs,
-                    allUnits = file.units
+                    allUnits = file.units,
+                    palette = palette
                 )
             }
         }

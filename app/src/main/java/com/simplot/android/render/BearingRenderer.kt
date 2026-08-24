@@ -40,6 +40,9 @@ object BearingRenderer {
     /** 复用 Path（每帧 reset） */
     private val beamPath by lazy { Path() }
 
+    /** ARGB 保留 RGB、覆盖 alpha（纯函数语义，内联辅助） */
+    private fun Int.withAlpha(a: Int): Int = (a shl 24) or (this and 0x00FFFFFF)
+
     /**
      * G45：波束宽度边界方位角（纯函数可单测）：中心方位 ± beamWidth/2。
      * beamWidth<=0 时两条边界与中心重合（调用方据此判断不画边线）。
@@ -78,13 +81,15 @@ object BearingRenderer {
     /**
      * 被动方位线（桌面版 PassiveBearings.Draw）。
      * R4：受 ShowSonar（Type="Sonar"）与 ShowEs（Type="ES" 等）开关控制。
-     * 声呐线深蓝、ES 线琥珀（桌面版两类区分）。
+     * 颜色按 ShowAsSide（目标阵营）分派：蓝方=蓝、红方=红、未知=黄（桌面反编译分支实测），
+     * 蓝红色读 [palette]（PlayerSettings 阵营色，桌面 Colors 全局变量同语义）。
      * G45：beamWidth>0 时画波束扇形填充 + 两条边界线。
      * 反馈㉔：allUnits 传入以支持 Emitter 实时方位重算。
      */
     fun draw(canvas: Canvas, u: Unit, camera: Camera, canvasW: Int, canvasH: Int,
              showSonar: Boolean = true, showEs: Boolean = true,
-             allUnits: List<Unit> = emptyList()) {
+             allUnits: List<Unit> = emptyList(),
+             palette: com.simplot.android.render.UnitRenderer.Palette = com.simplot.android.render.UnitRenderer.Palette()) {
         val bearings = u.passiveBearingArray ?: return
         if (bearings.isEmpty()) return
         val (cx, cy) = camera.worldToScreen(u.x, u.y, canvasW, canvasH)
@@ -97,7 +102,14 @@ object BearingRenderer {
             // 桌面 CalcBearing 复刻：Emitter 非空 → 按目标当前位置实时算方位
             val effBearing = bearingOf(b.bearing, b.emitter, allUnits, u)
 
-            val baseColor = if (isSonar) Color.argb(220, 60, 150, 255) else Color.argb(220, 255, 190, 60)
+            // 桌面 DrawBearings 颜色分派（反编译 0x1406eed22/0x1406eeda5 分支实测）：
+            // 按 ShowAsSide（目标阵营）选色——Blue→玩家蓝方色、Red→玩家红方色、
+            // Unknown/Neutral/其他→黄色（未知接触）。色值读 PlayerSettings（桌面 Colors 全局变量同语义）。
+            val baseColor = when (b.showAsSide.lowercase()) {
+                "blue" -> palette.blueFor.withAlpha(230)
+                "red" -> palette.redFor.withAlpha(230)
+                else -> Color.argb(230, 255, 215, 0)      // 未知 = 黄色
+            }
             // #9：复用池画笔，按需改色
             val paint = linePaint.apply { color = baseColor }
             val rad = Math.toRadians(effBearing)
