@@ -128,9 +128,9 @@ class ManualMoveTest {
         MovementEngine.manualMoveStep(u, 5.0, 1.0, "2026-01-01 00:05:00")   // → x=200000
         assertEquals(200000L, u.x)
 
-        MovementEngine.restoreSnapshot(u, snaps.removeLast())
+        MovementEngine.restoreSnapshot(u, snaps.removeAt(snaps.lastIndex))
         assertEquals(100000L, u.x)
-        MovementEngine.restoreSnapshot(u, snaps.removeLast())
+        MovementEngine.restoreSnapshot(u, snaps.removeAt(snaps.lastIndex))
         assertEquals(0L, u.x)
     }
 

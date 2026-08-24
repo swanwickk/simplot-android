@@ -73,7 +73,7 @@ fun ManualMoveSheet(
         undoStack.add(MovementEngine.snapshotOf(unit))
         val moved = MovementEngine.manualMoveStep(unit, mins, gear, moveTime)
         if (!moved) {
-            undoStack.removeLast()
+            undoStack.removeAt(undoStack.lastIndex) // 勿用 removeLast()：JDK21 编译会绑定 SequencedCollection，Android API<35 崩溃
             msg = "无法移动：航速为 0 或航程已耗尽"
             return
         }
