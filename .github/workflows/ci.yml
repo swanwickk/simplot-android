@@ -25,22 +25,20 @@ jobs:
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle（仅缓存/依赖管理，不额外 provision）
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
 
       - name: Unit tests (含 Robolectric Compose UI 测试)
-        run: gradle test
+        run: ./gradlew test
 
       - name: Assemble debug APK
-        run: gradle assembleDebug
+        run: ./gradlew assembleDebug
 
       - name: Assemble release APK (unsigned, 无仓库内签名)
-        run: gradle assembleRelease
+        run: ./gradlew assembleRelease
 
       - name: Lint
-        run: gradle lintDebug
+        run: ./gradlew lintDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
