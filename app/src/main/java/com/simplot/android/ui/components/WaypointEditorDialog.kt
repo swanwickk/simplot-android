@@ -220,23 +220,23 @@ private fun WaypointRow(
         Text("航路点 ${index + 1}", style = MaterialTheme.typography.labelMedium)
         Row {
             OutlinedTextField(value = xText, onValueChange = { xText = it; commit() },
-                label = { Text("X") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("X 坐标") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(end = 4.dp))
             OutlinedTextField(value = yText, onValueChange = { yText = it; commit() },
-                label = { Text("Y") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("Y 坐标") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(start = 4.dp))
         }
         Row {
             OutlinedTextField(value = speedText, onValueChange = { speedText = it; commit() },
-                label = { Text("航速(节)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("航速（节）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(end = 4.dp))
             OutlinedTextField(value = courseText, onValueChange = { courseText = it; commit() },
-                label = { Text("航向(度)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("航向（度）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(start = 4.dp))
         }
         Row {
             OutlinedTextField(value = altText, onValueChange = { altText = it; commit() },
-                label = { Text("高度/深度(米)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("高度/深度（米）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(end = 4.dp))
             // 到达时间（只读展示）：按 单位→航路点 直线距离 / 段速度 估算
             val arrive = CalcEngine.arriveTime(currentTime, wpDistNm(unit, wp), wp.speed / 1000.0)

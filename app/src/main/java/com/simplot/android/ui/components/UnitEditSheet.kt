@@ -186,7 +186,7 @@ fun UnitEditSheet(
                 )
                 ShowAsDropdown(
                     label = "阵营",
-                    options = listOf("Blue", "Red", "Neutral", "Unknown").map { it to it },
+                    options = listOf("蓝方 (Blue)" to "Blue", "红方 (Red)" to "Red", "中立 (Neutral)" to "Neutral", "未知 (Unknown)" to "Unknown"),
                     selected = side,
                     onSelect = { side = it },
                     modifier = Modifier.fillMaxWidth()
@@ -194,12 +194,12 @@ fun UnitEditSheet(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = unitClass, onValueChange = { unitClass = it },
-                        label = { Text("Class（类型简码）") },
+                        label = { Text("舰级 / 类型代码（如 DD/BB/CL）") },
                         singleLine = true, modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = numberText, onValueChange = { numberText = it },
-                        label = { Text("Number") },
+                        label = { Text("编号 / 舷号") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true, modifier = Modifier.weight(1f)
                     )
@@ -723,14 +723,17 @@ private fun PassiveBearingRow(
             TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = type, onValueChange = { type = it; emit() },
-                label = { Text("Type") },
-                singleLine = true, modifier = Modifier.weight(1f)
+            // 类型改为下拉：声呐 vs 电子支援
+            ShowAsDropdown(
+                label = "探测类型",
+                options = listOf("声呐 (Sonar)" to "Sonar", "电子支援 (ES)" to "ES"),
+                selected = if (type.equals("Sonar", true)) "Sonar" else "ES",
+                onSelect = { type = it; emit() },
+                modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = bearingText, onValueChange = { bearingText = it; emit() },
-                label = { Text("Bearing（度）") },
+                label = { Text("方位角（度 °）") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true, modifier = Modifier.weight(1f)
             )
@@ -738,21 +741,22 @@ private fun PassiveBearingRow(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = beamLenText, onValueChange = { beamLenText = it; emit() },
-                label = { Text("BeamLength") },
+                label = { Text("探测距离（海里，0=无限）") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true, modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = beamWidthText, onValueChange = { beamWidthText = it; emit() },
-                label = { Text("BeamWidth") },
+                label = { Text("波束宽度/误差角（度 °）") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true, modifier = Modifier.weight(1f)
             )
         }
         // Emitter：剧本单位下拉选择（自动读取当前场景全部单位，不再手输 IdNum）
+        val currentEmitterName = allUnits.firstOrNull { it.idNum == emitter }?.let { u -> u.callsignOrName().ifBlank { u.idNum } }
         ShowAsDropdown(
-            label = if (emitter.isNotBlank()) "Emitter（$emitter）" else "Emitter",
-            options = allUnits.map { u ->
+            label = if (emitter.isNotBlank()) "目标单位（${currentEmitterName ?: emitter}）" else "目标单位（可选关联）",
+            options = listOf("无目标关联（固定方位线）" to "") + allUnits.map { u ->
                 val disp = u.callsignOrName().ifBlank { u.idNum }
                 "$disp (${u.idNum})" to u.idNum
             },
@@ -762,12 +766,17 @@ private fun PassiveBearingRow(
         )
         OutlinedTextField(
             value = label, onValueChange = { label = it; emit() },
-            label = { Text("Label") },
+            label = { Text("标签 / 备注") },
             singleLine = true, modifier = Modifier.fillMaxWidth()
         )
         ShowAsDropdown(
-            label = "ShowAsSide",
-            options = listOf("Blue", "Red", "Neutral", "Unknown").map { it to it },
+            label = "目标阵营（决定线色：蓝/红/未知黄）",
+            options = listOf(
+                "未知 (Unknown - 黄色)" to "Unknown",
+                "蓝方 (Blue - 蓝色)" to "Blue",
+                "红方 (Red - 红色)" to "Red",
+                "中立 (Neutral - 黄色)" to "Neutral"
+            ),
             selected = showAsSide,
             onSelect = { showAsSide = it; emit() },
             modifier = Modifier.fillMaxWidth()

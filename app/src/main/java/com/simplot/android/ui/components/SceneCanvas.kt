@@ -452,30 +452,37 @@ private fun drawUnitLabel(
         color = UnitRenderer.colorOf(u.side, palette)
         textSize = UnitRenderer.labelTextSize(zoom)
     }
-    val parts = mutableListOf<String>()
-    // 桌面格式："TN 123 x 4  名称" 风格，按开关拼装
-    if (effTrack) parts.add("TN ${u.trackNumber}")
-    // P3-2 修复：标签呼叫号走 callsignOrName()（优先独立呼叫号、空串回退 Name），
-    // 此前直接用 u.name 导致 UnitEditSheet 配置的独立 callsign 在主海图标签不显示。
+    val lines = mutableListOf<String>()
+
+    // 第1行：单位标识（航迹号、呼叫号/名称、级别、类型）
+    val nameParts = mutableListOf<String>()
+    if (effTrack) nameParts.add("TN ${u.trackNumber}")
     val cn = u.callsignOrName()
-    if (effName && cn.isNotEmpty()) parts.add(cn)
-    if (effClass && u.unitClass.isNotEmpty()) parts.add(u.unitClass)
-    if (effUnitType && u.unitType.isNotEmpty()) parts.add(u.unitType)
+    if (effName && cn.isNotEmpty()) nameParts.add(cn)
+    if (effClass && u.unitClass.isNotEmpty()) nameParts.add(u.unitClass)
+    if (effUnitType && u.unitType.isNotEmpty()) nameParts.add(u.unitType)
+    if (tag.tagCallsign && u.name.isNotEmpty() && u.name != cn) nameParts.add(u.name)
+    if (nameParts.isNotEmpty()) lines.add(nameParts.joinToString(" "))
+
+    // 第2行：航向/航速（紧凑格式，位于名称下方）
     if (effCS) {
-        // 反馈㉕：紧凑格式 "190°/28kts"（桌面无 Course/Speed 字样前缀）
-        parts.add("${u.courseDeg().toInt()}°/${u.speedKnots().toInt()}kts")
+        lines.add("${u.courseDeg().toInt()}°/${u.speedKnots().toInt()}kts")
     }
-    if (effAlt && u.altitude != null) parts.add("Alt ${u.altitudeMeters()} m")
-    if (effDepth && u.depth != null) parts.add("Depth ${u.depthMeters()} m")
-    if (tag.tagCallsign && u.name.isNotEmpty()) parts.add(u.name)
-    if (tag.additionalText.isNotBlank()) parts.add(tag.additionalText)
-    val text = parts.joinToString("  ")
-    if (text.isNotEmpty()) {
+
+    // 第3行：高度 / 深度 / 附加文本（中文标示，位于航向航速下方）
+    val extraParts = mutableListOf<String>()
+    if (effAlt && u.altitude != null) extraParts.add("高度 ${u.altitudeMeters()}m")
+    if (effDepth && u.depth != null) extraParts.add("深度 ${u.depthMeters()}m")
+    if (tag.additionalText.isNotBlank()) extraParts.add(tag.additionalText)
+    if (extraParts.isNotEmpty()) lines.add(extraParts.joinToString(" "))
+
+    if (lines.isNotEmpty()) {
         val tx = sx + 10f * k
-        val ty = sy - 8f * k
-        // G08/反馈㉓更正：标签背景**全透明**——不绘制任何底色矩形（此前误解为改不透明）。
-        // useLabelBackground 开关保留在设置中但当前语义=无底色；文字可读性由描边兜底。
-        canvas.drawText(text, tx, ty, paint)
+        val startTy = sy - 8f * k
+        val lineHeight = paint.textSize * 1.18f
+        for ((idx, line) in lines.withIndex()) {
+            canvas.drawText(line, tx, startTy + idx * lineHeight, paint)
+        }
     }
 }
 

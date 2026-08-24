@@ -92,7 +92,7 @@ fun ArcEditorDialog(
                     }
                 }
                 Button(onClick = {
-                    sensors.add(Sensor(label = "New Sensor", maxRange = 50.0, arcAngle = 360.0, isFilled = true, isVisible = true))
+                    sensors.add(Sensor(label = "新传感器", maxRange = 50.0, arcAngle = 360.0, isFilled = true, isVisible = true))
                 }) { Text("+ 添加传感器") }
 
                 HorizontalDivider()
@@ -115,7 +115,7 @@ fun ArcEditorDialog(
                     }
                 }
                 Button(onClick = {
-                    weapons.add(Weapon(label = "New Weapon", maxRange = 50.0, arcAngle = 360.0, isFilled = true, isVisible = true))
+                    weapons.add(Weapon(label = "新武器", maxRange = 50.0, arcAngle = 360.0, isFilled = true, isVisible = true))
                 }) { Text("+ 添加武器") }
             }
         },
@@ -171,18 +171,18 @@ private fun ArcRow(
         Text(label, style = MaterialTheme.typography.bodyMedium)
         Row {
             OutlinedTextField(value = minText, onValueChange = { minText = it; commit() },
-                label = { Text("MinRange") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("最小射程（海里）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(end = 4.dp))
             OutlinedTextField(value = maxText, onValueChange = { maxText = it; commit() },
-                label = { Text("MaxRange") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("最大射程（海里）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(start = 4.dp))
         }
         Row {
             OutlinedTextField(value = startText, onValueChange = { startText = it; commit() },
-                label = { Text("StartAngle") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("起始角（度 0-360°）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(end = 4.dp))
             OutlinedTextField(value = arcText, onValueChange = { arcText = it; commit() },
-                label = { Text("ArcAngle") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                label = { Text("覆盖角（度 0-360°，0=整圆）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f).padding(start = 4.dp))
         }
         val parsed = ArcColorCodec.tryParseVbColor(colorText)

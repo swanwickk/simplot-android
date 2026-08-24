@@ -100,10 +100,10 @@ fun NewUnitDialog(
                 )
                 Row {
                     OutlinedTextField(value = xText, onValueChange = { xText = it },
-                        label = { Text("X") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        label = { Text("X 坐标（海里）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f).padding(end = 4.dp))
                     OutlinedTextField(value = yText, onValueChange = { yText = it },
-                        label = { Text("Y") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        label = { Text("Y 坐标（海里）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f).padding(start = 4.dp))
                 }
             }
