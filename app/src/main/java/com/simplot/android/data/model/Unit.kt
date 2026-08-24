@@ -55,7 +55,7 @@ data class Unit(
     @SerializedName("Ascend") var ascend: Int? = null,
     @SerializedName("DescRate") var descRate: Int? = null,
     @SerializedName("PerceptionArray") var perceptionArray: MutableList<Perception>? = null,
-    @SerializedName("PassiveBearingArray") var passiveBearingArray: MutableList<PassiveBearing>? = null,   // 被动方位（声呐/ES，桌面版 PassiveBearings）
+    @SerializedName(value = "BearingArray", alternate = ["PassiveBearingArray"]) var passiveBearingArray: MutableList<PassiveBearing>? = null,   // 被动方位（声呐/ES，桌面版 PassiveBearings；桌面存档键=BearingArray，反编译 SaveUnits 键序实测）
 
     /** 瞬态标记：本回合新加入的单位不移动（不落盘，Gson 忽略） */
     @Transient var isNewThisTurn: Boolean = false,
