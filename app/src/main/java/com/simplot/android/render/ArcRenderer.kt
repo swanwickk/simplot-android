@@ -170,6 +170,8 @@ object ArcRenderer {
         val ly = cy - radiusMax * kotlin.math.cos(labRad).toFloat()
         val lp = labelPaint
         lp.color = color
+        // 反馈㉑：弧标注字号与单位名称标签同链路（labelTextSize 随 zoom 缩放）
+        lp.textSize = com.simplot.android.render.UnitRenderer.labelTextSize(camera.zoom)
         val tw = lp.measureText(label)
         val th = lp.textSize
         labelRect.set(lx, ly - th, lx + tw, ly + 2f)

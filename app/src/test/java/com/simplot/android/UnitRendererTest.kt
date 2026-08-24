@@ -11,17 +11,17 @@ class UnitRendererTest {
 
     @Test
     fun `label text size scales with zoom`() {
-        // 默认 zoom（LABEL_BASE_ZOOM）→ 24f；下限 18f；上限 48f（契约6 整体加大）
-        assertEquals(24f, UnitRenderer.labelTextSize(0.0015f), 0.001f)
-        assertEquals(18f, UnitRenderer.labelTextSize(0.0007f), 0.001f)   // 撞下限（拉普拉塔默认视野）
-        assertEquals(48f, UnitRenderer.labelTextSize(0.05f), 0.001f)     // 撞上限（放大）
+        // 默认 zoom（LABEL_BASE_ZOOM）→ 32f；下限 24f；上限 64f（反馈㉑：真机反馈整体偏小再放大）
+        assertEquals(32f, UnitRenderer.labelTextSize(0.0015f), 0.001f)
+        assertEquals(24f, UnitRenderer.labelTextSize(0.0007f), 0.001f)   // 撞下限（拉普拉塔默认视野）
+        assertEquals(64f, UnitRenderer.labelTextSize(0.05f), 0.001f)     // 撞上限（放大）
     }
 
     @Test
     fun `label text size clamps at extremes`() {
-        // 极远缩放 → 下限 18f；极大放大 → 上限 48f
-        assertEquals(18f, UnitRenderer.labelTextSize(0.00001f), 0.001f)
-        assertEquals(48f, UnitRenderer.labelTextSize(1f), 0.001f)
+        // 极远缩放 → 下限 24f；极大放大 → 上限 64f
+        assertEquals(24f, UnitRenderer.labelTextSize(0.00001f), 0.001f)
+        assertEquals(64f, UnitRenderer.labelTextSize(1f), 0.001f)
     }
 
     @Test
