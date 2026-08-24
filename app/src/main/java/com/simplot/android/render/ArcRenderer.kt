@@ -45,6 +45,27 @@ object ArcRenderer {
     fun sweepOf(arcAngle: Double): Float? =
         if (arcAngle < 0.0) null else if (arcAngle == 0.0) 360f else arcAngle.toFloat()
 
+    /**
+     * 格式化距离数值：整海里显示为整数（如 15、0），非整海里显示 1 位小数（如 14.5）。
+     */
+    fun formatRangeNumber(r: Double): String =
+        if (r % 1.0 == 0.0) r.toInt().toString()
+        else String.format(java.util.Locale.US, "%.1f", r)
+
+    /**
+     * 构造弧上标注文字：[弧名称] [最小距离]-[最大距离]。
+     * 例如：
+     * - "FC L 0-15"
+     * - "SS L M 0-22"
+     * - "Main Gun 2-15"
+     * - 若名称为空则显示 "0-15"
+     */
+    fun formatArcLabel(arcName: String, minRangeNm: Double, maxRangeNm: Double): String {
+        val rangeStr = "${formatRangeNumber(minRangeNm)}-${formatRangeNumber(maxRangeNm)}"
+        val cleanName = arcName.trim()
+        return if (cleanName.isNotBlank()) "$cleanName $rangeStr" else rangeStr
+    }
+
     // ---- P3-1：复用画笔/路径（主线程串行绘制，字段复用无并发冲突） ----
     private val arcPaint by lazy { Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f } }
     private val ringPath by lazy { Path() }
@@ -65,16 +86,28 @@ object ArcRenderer {
         if (showSensors) {
             u.sensorArray.orEmpty().forEach { s ->
                 if (!s.isVisible) return@forEach
+                val arcName = when {
+                    s.tag.isNotBlank() && s.label.isNotBlank() -> "${s.tag} ${s.label}"
+                    s.label.isNotBlank() -> s.label
+                    s.tag.isNotBlank() -> s.tag
+                    else -> ""
+                }
                 occupied = drawArc(canvas, cx, cy, s.minRange, s.maxRange, s.startAngle, s.arcAngle,
-                    headingRad, s.isFilled, s.arcColor, camera, canvasW, canvasH, occupied)
+                    headingRad, s.isFilled, s.arcColor, camera, canvasW, canvasH, occupied, arcName)
             }
         }
         // 武器弧（G23：按桌面列表原序绘制）
         if (showWeapons) {
             u.weaponArray.orEmpty().forEach { w ->
                 if (!w.isVisible) return@forEach
+                val arcName = when {
+                    w.tag.isNotBlank() && w.label.isNotBlank() -> "${w.tag} ${w.label}"
+                    w.label.isNotBlank() -> w.label
+                    w.tag.isNotBlank() -> w.tag
+                    else -> ""
+                }
                 occupied = drawArc(canvas, cx, cy, w.minRange, w.maxRange, w.startAngle, w.arcAngle,
-                    headingRad, w.isFilled, w.arcColor, camera, canvasW, canvasH, occupied)
+                    headingRad, w.isFilled, w.arcColor, camera, canvasW, canvasH, occupied, arcName)
             }
         }
     }
@@ -92,16 +125,18 @@ object ArcRenderer {
     /**
      * 画一条弧 + 标注，返回更新后的占用矩形列表。
      * 标注语义（桌面反编译 DrawSensorLabels 分派 + DrawCircleLabels/DrawArcLabels）：
-     * - ArcAngle ≤ 0（整圆）：DrawCircleLabels —— 在圆的 225° 方位标 MaxRange 距离值；
-     * - ArcAngle > 0（扇形）：DrawArcLabels —— 在弧中点角度标「距离+角度」。
-     * 字号 12×scale、颜色取弧色不透明、重叠跳过（桌面 CheckLabelOverlap 简化版）。
+     * - 标注内容格式：[弧名称] [最小距离]-[最大距离]，如 "FC L 0-15"、"SS L M 0-22"；
+     * - ArcAngle ≤ 0（整圆）：在圆的 225° 附近标「名称 最小-最大」；
+     * - ArcAngle > 0（扇形）：在弧中点角度标「名称 最小-最大」。
+     * 多环密集时在基准角附近微调寻空（防 14nm/15nm 相互遮挡），寻空失败保底绘制不丢标注。
      */
     private fun drawArc(
         canvas: Canvas, cx: Float, cy: Float,
         minRangeNm: Double, maxRangeNm: Double,
         startAngle: Double, arcAngle: Double,
         headingRad: Double, filled: Boolean, vbColor: String?, camera: Camera,
-        canvasW: Int, canvasH: Int, occupied: MutableList<RectF>?
+        canvasW: Int, canvasH: Int, occupied: MutableList<RectF>?,
+        arcName: String = ""
     ): MutableList<RectF>? {
         if (maxRangeNm <= 0) return occupied
         // R1-v3 修复（桌面反编译 DrawSensors 实测语义）：ArcAngle=0 表示整圆（360°），
@@ -155,30 +190,49 @@ object ArcRenderer {
         if (cx < -radiusMax || cx > canvasW + radiusMax || cy < -radiusMax || cy > canvasH + radiusMax) {
             return occupied
         }
-        val label = if (arcAngle > 0.0) {
-            // 扇形：弧中点角度处标「距离/角度」（桌面 DrawArcLabels 距离+角度语义）
-            val midCompass = (startAngle + arcAngle / 2.0)
-            String.format(java.util.Locale.US, "%.0f/%.0f°", maxRangeNm, midCompass)
-        } else {
-            // 整圆：225° 方位标距离值（桌面 DrawCircleLabels 常量 225° 反编译实测）
-            String.format(java.util.Locale.US, "%.0f", maxRangeNm)
-        }
-        val labelAngleDeg = if (arcAngle > 0.0) startAngle + arcAngle / 2.0 else 225.0
-        // 罗盘角 → 屏幕（0=北顺时针；Y 翻转）
-        val labRad = Math.toRadians(labelAngleDeg + Math.toDegrees(headingRad))
-        val lx = cx + radiusMax * kotlin.math.sin(labRad).toFloat()
-        val ly = cy - radiusMax * kotlin.math.cos(labRad).toFloat()
+        val label = formatArcLabel(arcName, minRangeNm, maxRangeNm)
+        val baseAngleDeg = if (arcAngle > 0.0) startAngle + arcAngle / 2.0 else 225.0
+
         val lp = labelPaint
         lp.color = color
         // 反馈㉑：弧标注字号与单位名称标签同链路（labelTextSize 随 zoom 缩放）
         lp.textSize = com.simplot.android.render.UnitRenderer.labelTextSize(camera.zoom)
         val tw = lp.measureText(label)
         val th = lp.textSize
-        labelRect.set(lx, ly - th, lx + tw, ly + 2f)
-        if (!overlaps(occupied, labelRect)) {
-            canvas.drawText(label, lx, ly, lp)
-            return occupy(occupied, labelRect)
+
+        // 尝试最佳非重叠位置（整圆在 225° 附近微调寻空；扇形在中心角附近微调；寻空失败仍保底绘制，不丢标注）
+        val angleCandidates = if (arcAngle > 0.0) {
+            listOf(baseAngleDeg, baseAngleDeg - 8.0, baseAngleDeg + 8.0, baseAngleDeg - 16.0, baseAngleDeg + 16.0)
+        } else {
+            listOf(225.0, 210.0, 240.0, 195.0, 255.0, 180.0, 270.0, 165.0, 285.0)
         }
-        return occupied
+
+        var chosenLx = 0f
+        var chosenLy = 0f
+        var foundFree = false
+
+        for (candAngle in angleCandidates) {
+            val labRad = Math.toRadians(candAngle + Math.toDegrees(headingRad))
+            val lx = cx + radiusMax * kotlin.math.sin(labRad).toFloat()
+            val ly = cy - radiusMax * kotlin.math.cos(labRad).toFloat()
+            labelRect.set(lx, ly - th, lx + tw, ly + 2f)
+            if (!overlaps(occupied, labelRect)) {
+                chosenLx = lx
+                chosenLy = ly
+                foundFree = true
+                break
+            }
+        }
+
+        if (!foundFree) {
+            // 所有候选角度均有重叠：使用基准角度强行绘制（保底显示）
+            val labRad = Math.toRadians(baseAngleDeg + Math.toDegrees(headingRad))
+            chosenLx = cx + radiusMax * kotlin.math.sin(labRad).toFloat()
+            chosenLy = cy - radiusMax * kotlin.math.cos(labRad).toFloat()
+            labelRect.set(chosenLx, chosenLy - th, chosenLx + tw, chosenLy + 2f)
+        }
+
+        canvas.drawText(label, chosenLx, chosenLy, lp)
+        return occupy(occupied, labelRect)
     }
 }
