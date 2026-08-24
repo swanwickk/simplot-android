@@ -53,6 +53,25 @@ object BearingRenderer {
     }
 
     /**
+     * 计算角度差 a - b，归一化到 [-180, 180] 区间
+     */
+    fun angleDiff(a: Double, b: Double): Double {
+        var diff = (a - b) % 360.0
+        if (diff > 180.0) diff -= 360.0
+        if (diff < -180.0) diff += 360.0
+        return diff
+    }
+
+    /**
+     * 将角度归一化到 [0, 360) 区间
+     */
+    fun normalizeAngle(deg: Double): Double {
+        var d = deg % 360.0
+        if (d < 0.0) d += 360.0
+        return d
+    }
+
+    /**
      * 桌面 CalcBearing 复刻（纯函数可单测）：本站 → 目标 的真实方位角（度，0=北顺时针），Floor 取整。
      * 与移动公式同系：ATan2(dx, dy)（注意桌面 Sin/Cos 系 x=dx, y=dy 北正）。
      * 返回 null 当两点重合（方位无定义）。
@@ -67,16 +86,55 @@ object BearingRenderer {
     }
 
     /**
-     * 单条方位的显示角（纯函数可单测）：Emitter 非空且找到目标 → 实时重算；
-     * 否则用存档 Bearing 值。对齐桌面 CBearing.CalcBearing 语义。
+     * 单条方位的显示中心角（纯函数可单测）：
+     * - 若 Emitter 关联了目标单位：
+     *   以目标真实方位为基准；允许在波束宽度 [-beamWidth/2, +beamWidth/2] 内存在随机散布误差（目标不在正中心，呈现探测模糊）；
+     *   若存储的方位角偏离真实方位超过波束半角（例如用户调小了波束宽度），
+     *   强制将其截断/限制在波束允许范围内（保证目标单位无论如何调整波束宽度，都必然处于扇区内）。
+     * - 若无 Emitter 关联（固定方位线）：直接返回存档 bearingStored。
      */
+    fun bearingOf(
+        bearingStored: Double,
+        emitterId: String,
+        beamWidth: Double,
+        allUnits: List<Unit>,
+        owner: Unit
+    ): Double {
+        if (emitterId.isBlank()) return normalizeAngle(bearingStored)
+        val target = allUnits.firstOrNull { it.idNum == emitterId } ?: return normalizeAngle(bearingStored)
+        val trueBearing = calcBearing(owner.x, owner.y, target.x, target.y) ?: return normalizeAngle(bearingStored)
+
+        if (beamWidth <= 0.0) {
+            return trueBearing
+        }
+
+        // 最大允许偏角为半波束（保留 15% 缓冲边界，确保目标不会刚好切在边界线上）
+        val maxDeviation = (beamWidth / 2.0) * 0.85
+        val currentDiff = angleDiff(bearingStored, trueBearing)
+
+        return if (kotlin.math.abs(currentDiff) <= maxDeviation) {
+            normalizeAngle(bearingStored)
+        } else {
+            // 超出范围（如用户将 10° 改成 5°）：截断到新波束允许的最大散布内，确保目标始终在扇区内
+            val clampedDiff = currentDiff.coerceIn(-maxDeviation, maxDeviation)
+            normalizeAngle(trueBearing + clampedDiff)
+        }
+    }
+
+    /** 旧签名兼容 */
     fun bearingOf(bearingStored: Double, emitterId: String, allUnits: List<Unit>, owner: Unit): Double =
-        if (emitterId.isNotBlank()) {
-            val target = allUnits.firstOrNull { it.idNum == emitterId }
-            if (target != null) {
-                calcBearing(owner.x, owner.y, target.x, target.y) ?: bearingStored
-            } else bearingStored
-        } else bearingStored
+        bearingOf(bearingStored, emitterId, 0.0, allUnits, owner)
+
+    /**
+     * 在目标真实方位基础上，按波束宽度生成一个随机散布方位（纯函数可单测）：
+     * 保证真实目标处于生成扇区内，但不处于正中央。
+     */
+    fun randomizeBearingInBeam(trueBearing: Double, beamWidth: Double, randomFactor: Double = kotlin.random.Random.nextDouble()): Double {
+        if (beamWidth <= 0.0) return normalizeAngle(trueBearing)
+        val maxDev = (beamWidth / 2.0) * 0.75
+        val offset = (randomFactor * 2.0 - 1.0) * maxDev
+        return normalizeAngle(kotlin.math.floor(trueBearing + offset))
+    }
 
     /**
      * 被动方位线（桌面版 PassiveBearings.Draw）。
@@ -99,8 +157,8 @@ object BearingRenderer {
             if (isSonar && !showSonar) continue
             if (!isSonar && !showEs) continue
 
-            // 桌面 CalcBearing 复刻：Emitter 非空 → 按目标当前位置实时算方位
-            val effBearing = bearingOf(b.bearing, b.emitter, allUnits, u)
+            // 桌面 CalcBearing 复刻：Emitter 非空 → 按目标当前位置与波束宽度计算显示方位
+            val effBearing = bearingOf(b.bearing, b.emitter, b.beamWidth, allUnits, u)
 
             // 桌面 DrawBearings 颜色分派（反编译 0x1406eed22/0x1406eeda5 分支实测）：
             // 按 ShowAsSide（目标阵营）选色——Blue→玩家蓝方色、Red→玩家红方色、

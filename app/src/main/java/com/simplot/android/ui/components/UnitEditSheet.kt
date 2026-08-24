@@ -748,7 +748,19 @@ private fun PassiveBearingRow(
                 singleLine = true, modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
-                value = beamWidthText, onValueChange = { beamWidthText = it; emit() },
+                value = beamWidthText, onValueChange = {
+                    beamWidthText = it
+                    val newWidth = it.toDoubleOrNull()
+                    if (newWidth != null && emitter.isNotBlank() && ownerUnit != null) {
+                        val tgt = allUnits.firstOrNull { it.idNum == emitter }
+                        if (tgt != null) {
+                            val curBearing = bearingText.toDoubleOrNull() ?: bearing.bearing
+                            val clamped = com.simplot.android.render.BearingRenderer.bearingOf(curBearing, emitter, newWidth, allUnits, ownerUnit)
+                            bearingText = formatCourseSpeed(clamped)
+                        }
+                    }
+                    emit()
+                },
                 label = { Text("波束宽度/误差角（度 °）") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true, modifier = Modifier.weight(1f)
@@ -770,7 +782,9 @@ private fun PassiveBearingRow(
                     if (tgt != null && ownerUnit != null) {
                         val autoDeg = com.simplot.android.render.BearingRenderer.calcBearing(ownerUnit.x, ownerUnit.y, tgt.x, tgt.y)
                         if (autoDeg != null) {
-                            bearingText = formatCourseSpeed(autoDeg)
+                            val width = beamWidthText.toDoubleOrNull() ?: bearing.beamWidth
+                            val randomized = com.simplot.android.render.BearingRenderer.randomizeBearingInBeam(autoDeg, width)
+                            bearingText = formatCourseSpeed(randomized)
                         }
                         if (showAsSide == "Unknown" && tgt.side.isNotBlank()) {
                             showAsSide = tgt.side
