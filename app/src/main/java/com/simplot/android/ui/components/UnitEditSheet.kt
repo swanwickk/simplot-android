@@ -281,6 +281,7 @@ fun UnitEditSheet(
                     key(idx) {
                         PassiveBearingRow(
                             bearing = b,
+                            ownerUnit = unit,
                             allUnits = allUnits,
                             onChange = { updated ->
                                 bearings = bearings.mapIndexed { i, old -> if (i == idx) updated else old }
@@ -655,7 +656,7 @@ private fun ShowAsDropdown(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val display = options.firstOrNull { it.second == selected }?.first ?: selected
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = modifier) {
         OutlinedTextField(
             value = display,
             onValueChange = {},
@@ -663,7 +664,7 @@ private fun ShowAsDropdown(
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             singleLine = true,
-            modifier = modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable)
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (text, value) ->
@@ -690,6 +691,7 @@ private fun PassiveBearingRow(
     bearing: com.simplot.android.data.model.PassiveBearing,
     onChange: (com.simplot.android.data.model.PassiveBearing) -> kotlin.Unit,
     onDelete: () -> kotlin.Unit,
+    ownerUnit: Unit? = null,
     allUnits: List<Unit> = emptyList()
 ) {
     var type by remember { mutableStateOf(bearing.type) }
@@ -716,7 +718,7 @@ private fun PassiveBearingRow(
         HorizontalDivider()
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = if (label.isNotBlank()) label else (if (emitter.isNotBlank()) "Emitter $emitter" else "方位 ${formatCourseSpeed(bearing.bearing)}°"),
+                text = if (label.isNotBlank()) label else (if (emitter.isNotBlank()) "目标 $emitter" else "方位 ${formatCourseSpeed(bearing.bearing)}°"),
                 style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.weight(1f)
             )
@@ -752,16 +754,31 @@ private fun PassiveBearingRow(
                 singleLine = true, modifier = Modifier.weight(1f)
             )
         }
-        // Emitter：剧本单位下拉选择（自动读取当前场景全部单位，不再手输 IdNum）
+        // Emitter：剧本单位下拉选择（自动读取当前场景全部单位，排除自身）
         val currentEmitterName = allUnits.firstOrNull { it.idNum == emitter }?.let { u -> u.callsignOrName().ifBlank { u.idNum } }
         ShowAsDropdown(
             label = if (emitter.isNotBlank()) "目标单位（${currentEmitterName ?: emitter}）" else "目标单位（可选关联）",
-            options = listOf("无目标关联（固定方位线）" to "") + allUnits.map { u ->
+            options = listOf("无目标关联（固定方位线）" to "") + allUnits.filter { u -> ownerUnit == null || u.idNum != ownerUnit.idNum }.map { u ->
                 val disp = u.callsignOrName().ifBlank { u.idNum }
                 "$disp (${u.idNum})" to u.idNum
             },
             selected = emitter,
-            onSelect = { emitter = it; emit() },
+            onSelect = { newEmitter ->
+                emitter = newEmitter
+                if (newEmitter.isNotBlank()) {
+                    val tgt = allUnits.firstOrNull { it.idNum == newEmitter }
+                    if (tgt != null && ownerUnit != null) {
+                        val autoDeg = com.simplot.android.render.BearingRenderer.calcBearing(ownerUnit.x, ownerUnit.y, tgt.x, tgt.y)
+                        if (autoDeg != null) {
+                            bearingText = formatCourseSpeed(autoDeg)
+                        }
+                        if (showAsSide == "Unknown" && tgt.side.isNotBlank()) {
+                            showAsSide = tgt.side
+                        }
+                    }
+                }
+                emit()
+            },
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(

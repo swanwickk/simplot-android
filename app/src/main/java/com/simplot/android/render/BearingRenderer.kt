@@ -113,22 +113,20 @@ object BearingRenderer {
             // #9：复用池画笔，按需改色
             val paint = linePaint.apply { color = baseColor }
             val rad = Math.toRadians(effBearing)
-            // 屏显长度：BeamLength(海里)×zoom；0 时默认 80px
-            val lenPx = if (b.beamLength > 0) (b.beamLength * 100000.0 * camera.zoom).toFloat() else 80f
-            val ex = cx + lenPx * Math.sin(rad).toFloat()
-            val ey = cy - lenPx * Math.cos(rad).toFloat()
-            canvas.drawLine(cx, cy, ex, ey, paint)
+            // 屏显长度：BeamLength(海里)×zoom；0/未填表示探测距离无限（延伸覆盖整个海图视野）
+            val maxViewDim = maxOf(canvasW.toFloat(), canvasH.toFloat()) * 3f
+            val lenPx = if (b.beamLength > 0) (b.beamLength * 100000.0 * camera.zoom).toFloat() else maxOf(3000f, maxViewDim)
 
-            // G45：波束宽度 >0 → 扇形填充 + 两条边界线（更淡、更细）
             if (b.beamWidth > 0.0) {
+                // G45/反馈㉗：波束宽度 >0 时画扇形填充 + 两侧误差边界线（不画中间多余黄线）
                 val (lo, hi) = beamEdgeBearings(effBearing, b.beamWidth)
                 // 扇形填充（半透明）
                 val fillPaint = beamFillPaint.apply {
-                    color = Color.argb(50, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
+                    color = Color.argb(45, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
                 }
                 beamPath.reset()
                 beamPath.moveTo(cx, cy)
-                val steps = 24
+                val steps = 36
                 val loRad = Math.toRadians(lo)
                 val hiRad = Math.toRadians(hi)
                 for (i in 0..steps) {
@@ -137,14 +135,22 @@ object BearingRenderer {
                 }
                 beamPath.close()
                 canvas.drawPath(beamPath, fillPaint)
-                // 边界线
-                val edgePaintLocal = this@BearingRenderer.edgePaint.apply { color = baseColor }
+                // 两侧边界线
+                val edgePaintLocal = this@BearingRenderer.edgePaint.apply {
+                    color = baseColor
+                    strokeWidth = 1.5f
+                }
                 for (edge in listOf(lo, hi)) {
                     val er = Math.toRadians(edge)
                     val eeX = cx + lenPx * Math.sin(er).toFloat()
                     val eeY = cy - lenPx * Math.cos(er).toFloat()
                     canvas.drawLine(cx, cy, eeX, eeY, edgePaintLocal)
                 }
+            } else {
+                // 波束宽度 <= 0：单条精确方位线
+                val ex = cx + lenPx * Math.sin(rad).toFloat()
+                val ey = cy - lenPx * Math.cos(rad).toFloat()
+                canvas.drawLine(cx, cy, ex, ey, paint)
             }
         }
     }
