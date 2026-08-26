@@ -841,7 +841,8 @@ class MainActivity : ComponentActivity() {
                 DropdownMenuItem(text = { Text("视图:${com.simplot.android.ui.showSideLabel(vm.showSide)}") }, onClick = { vm.cycleShowSide() })
                 DropdownMenuItem(text = { Text("符号:${if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.NTDS) "NTDS" else if (vm.symbolStyle == com.simplot.android.render.UnitRenderer.SymbolStyle.CWS) "CWS" else "WW2"}") }, onClick = { vm.toggleSymbolStyle() })
                 HorizontalDivider()
-                // 弧显示三态（传感器/武器/声呐被动方位）
+                // 航迹与弧显示控制
+                DropdownMenuItem(text = { Text("${if (vm.settings.showWaypoints) "✓ " else "  "}航迹/航路点") }, onClick = { vm.toggleSetting { it.copy(showWaypoints = !it.showWaypoints) } })
                 DropdownMenuItem(text = { Text("${if (vm.settings.showSensors) "✓ " else "  "}传感器弧") }, onClick = { vm.toggleSetting { it.copy(showSensors = !it.showSensors) } })
                 DropdownMenuItem(text = { Text("${if (vm.settings.showWeapons) "✓ " else "  "}武器弧") }, onClick = { vm.toggleSetting { it.copy(showWeapons = !it.showWeapons) } })
                 DropdownMenuItem(text = { Text("${if (vm.settings.showSonar && vm.settings.showEs) "✓ " else "  "}声呐/被动方位") }, onClick = {
