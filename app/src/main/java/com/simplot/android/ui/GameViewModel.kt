@@ -34,9 +34,9 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class ShowSide(val sideName: String?) {
     ALL(null), BLUE("Blue"), RED("Red");
 
-    /** 单位是否对当前视图可见（对齐桌面 GetCurrentPerception，支持时间窗与感知迷雾） */
-    fun allows(unit: SimUnit, currentTime: String = ""): Boolean =
-        sideName == null || com.simplot.android.engine.FogOfWar.isVisibleTo(unit, sideName, currentTime)
+    /** 单位是否对当前视图可见（桌面原始行为：All=全部，Blue=蓝方，Red=红方） */
+    fun allows(unit: SimUnit): Boolean =
+        sideName == null || unit.side == sideName
 
     /** 纯阵营字符串判定（兼顾向后兼容） */
     fun allows(side: String?): Boolean = sideName == null || side == sideName
@@ -1319,7 +1319,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         // 过滤隐藏当前选中单位时清除选中（避免选中不可见单位）
         val sel = selectedUnitId?.let { id -> file?.units?.firstOrNull { it.idNum == id } }
-        if (sel != null && !showSide.allows(sel)) selectedUnitId = null
+        if (sel != null && sel.side != showSide.sideName) selectedUnitId = null
         toast("视图：${showSideLabel(showSide)}")
     }
 

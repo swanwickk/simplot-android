@@ -248,7 +248,7 @@ class MainActivity : ComponentActivity() {
                             measureMode = vm.measureMode && !replaying2,
                             onMeasureDone = { s, e -> vm.onMeasureComplete(s, e) },
                             savedMeasures = vm.measureLog,
-                            unitDistances = if (!replaying2 && !vm.measureMode) vm.selectedUnitId?.let { id -> com.simplot.android.data.util.unitDistances(f2, id).filter { d -> f2.units.firstOrNull { u -> u.idNum == d.idNum }?.let { vm.showSide.allows(it) } ?: vm.showSide.allows(d.side) } } else null,
+                            unitDistances = if (!replaying2 && !vm.measureMode) vm.selectedUnitId?.let { id -> com.simplot.android.data.util.unitDistances(f2, id).filter { d -> vm.showSide.allows(d.side) } } else null,
                             symbolStyle = vm.symbolStyle,
                             settings = vm.settings,
                             miscAnnotations = vm.miscAnnotations,
@@ -317,7 +317,7 @@ class MainActivity : ComponentActivity() {
                     // ② 点选单位自动测量：仅非回放且非测量模式且选中单位时计算（selectedUnitId 变更即重组刷新）
                     // G30：测量辅助线按 Show Side 过滤（被过滤方单位不画连线）
                     val unitDist = if (!replaying && !vm.measureMode) vm.selectedUnitId?.let { id ->
-                        unitDistances(f, id).filter { d -> f.units.firstOrNull { u -> u.idNum == d.idNum }?.let { vm.showSide.allows(it) } ?: vm.showSide.allows(d.side) }
+                        unitDistances(f, id).filter { d -> vm.showSide.allows(d.side) }
                     } else null
                     // 取消选中：点空白（SceneCanvas hitTest 未命中 -> onSelect(null)）、下方选中条按钮、编辑溢出菜单均可；不做覆盖地图的弹窗/悬浮
                     // 返回键：有选中则取消选中（不退出页面），无选中走系统默认

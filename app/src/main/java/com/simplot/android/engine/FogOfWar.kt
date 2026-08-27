@@ -33,29 +33,16 @@ object FogOfWar {
      * - 中立/公共参考点：无敌对关系默认可见。
      */
     fun isVisibleTo(unit: Unit, side: String, currentTime: String = ""): Boolean {
-        // 1. 己方单位：始终对自己可见
+        // 己方单位：始终对自己可见
         if (unit.side.equals(side, ignoreCase = true)) return true
-
-        // 2. 存在感知记录：只要列表中存在对应观察侧的记录，即刻判定可见！
+        // 敌方/中立单位：必须有 SeenBySide==side 的感知记录才可见
         val pa = unit.perceptionArray
         if (pa != null && pa.isNotEmpty()) {
             return pa.any { p ->
-                if (!p.seenBySide.equals(side, ignoreCase = true)) return@any false
-                // 即时模式（currentTime 为空）或时间有效，即刻可见
-                if (currentTime.isBlank()) true else isPerceptionActiveAt(p, currentTime)
+                p.seenBySide.equals(side, ignoreCase = true)
             }
         }
-
-        // 3. 无感知记录（未被任何侦测记录捕获）：
-        // 明确对立阵营（Red 对 Blue、Blue 对 Red）默认不可见
-        val isEnemy = (side.equals("Blue", ignoreCase = true) && unit.side.equals("Red", ignoreCase = true)) ||
-                      (side.equals("Red", ignoreCase = true) && unit.side.equals("Blue", ignoreCase = true))
-        if (isEnemy) {
-            return false
-        }
-
-        // 非对立公共单位（Neutral / Unknown / All / Reference Point）默认可见
-        return true
+        return false
     }
 
     /** 感知记录时间判定（宽容防御：仅当明确存在过期时间且解析确认已过期时才阻断，其余一律有效） */
