@@ -112,17 +112,24 @@ class FogOfWarDualSideTest {
     }
 
     @Test
-    fun `show side hides enemy unit when fog enabled and not visible`() {
-        val redHidden = Unit(
-            idNum = "S003", side = "Red", name = "Secret-Sub",
+    fun `show side respects perception time window`() {
+        val redTimeBounded = Unit(
+            idNum = "S004", side = "Red", name = "Radar-Contact",
             perceptionArray = mutableListOf(
-                Perception(seenBySide = "Red") // 仅对红方可见，对蓝方不可见
+                Perception(
+                    seenBySide = "Blue",
+                    positionTimeStart = "1942-11-14 23:00:00",
+                    positionTimeEnd = "1942-11-14 23:10:00"
+                )
             )
         )
         val showBlue = com.simplot.android.ui.ShowSide.BLUE
-        val showRed = com.simplot.android.ui.ShowSide.RED
         
-        assertFalse("红方单位未对蓝方开放可见时，在蓝方视图下必须隐藏", showBlue.allows(redHidden))
-        assertTrue("红方单位在红方视图下始终可见", showRed.allows(redHidden))
+        // 23:05 在时间窗内 → 可见
+        assertTrue("时间窗内可见", showBlue.allows(redTimeBounded, "1942-11-14 23:05:00"))
+        // 23:15 时间窗过期 → 不可见
+        assertFalse("时间窗过期后隐藏", showBlue.allows(redTimeBounded, "1942-11-14 23:15:00"))
+        // 22:50 尚未侦测到 → 不可见
+        assertFalse("尚未发生侦测时隐藏", showBlue.allows(redTimeBounded, "1942-11-14 22:50:00"))
     }
 }

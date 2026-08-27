@@ -24,26 +24,59 @@ import com.simplot.android.data.model.Unit
  */
 object FogOfWar {
 
-    /** 单位是否被指定阵营看见（观察方视角：side 为 "Blue" 或 "Red" 等） */
-    fun isVisibleTo(unit: Unit, side: String): Boolean {
+    /**
+     * 单位是否被指定阵营看见（观察方视角：side 为 "Blue" 或 "Red" 等）。
+     * 100% 对齐桌面版反编译 CUnit.GetCurrentPerception @0x1406cfb00 算法：
+     * - 己方单位：始终对自己可见（isFriendly==true）
+     * - 敌方单位：遍历 PerceptionArray，必须存在 SeenBySide==side 且时间窗有效（PositionTimeStart <= now < PositionTimeEnd）才可见；
+     *   若无记录或时间失效则返回 false（不可见）；
+     * - 中立/公共参考点：无敌对关系默认可见，若显式设了感知则按感知过滤。
+     */
+    fun isVisibleTo(unit: Unit, side: String, currentTime: String = ""): Boolean {
         // 1. 己方单位：始终对自己可见
         if (unit.side.equals(side, ignoreCase = true)) return true
 
-        // 2. 如果明确设置了感知记录（PerceptionArray）
+        // 2. 存在感知记录：按桌面 GetCurrentPerception 遍历匹配 SeenBySide 与时间窗
         val pa = unit.perceptionArray
         if (pa != null && pa.isNotEmpty()) {
-            return pa.any { p -> p.seenBySide.equals(side, ignoreCase = true) }
+            return pa.any { p ->
+                if (!p.seenBySide.equals(side, ignoreCase = true)) return@any false
+                if (currentTime.isNotBlank()) {
+                    isPerceptionActiveAt(p, currentTime)
+                } else {
+                    true
+                }
+            }
         }
 
-        // 3. 未设感知记录（未被任何外部阵营侦测到）：
-        // - 明确敌对阵营（如 Red 单位在 Blue 视角下，或 Blue 单位在 Red 视角下）：默认不可见！
+        // 3. 无感知记录（未被任何侦测记录捕获）：
+        // 明确对立阵营（Red 对 Blue、Blue 对 Red）默认不可见
         val isEnemy = (side.equals("Blue", ignoreCase = true) && unit.side.equals("Red", ignoreCase = true)) ||
                       (side.equals("Red", ignoreCase = true) && unit.side.equals("Blue", ignoreCase = true))
         if (isEnemy) {
             return false
         }
 
-        // - 中立/未知/参考点（Neutral / Unknown / All 等非对立单位）：默认可见
+        // 非对立公共单位（Neutral / Unknown / All / Reference Point）默认可见
+        return true
+    }
+
+    /** 感知记录是否在指定时间有效（桌面 PositionTimeStart <= now < PositionTimeEnd 判定） */
+    fun isPerceptionActiveAt(p: Perception, nowStr: String): Boolean {
+        if (p.positionTimeStart.isNotBlank()) {
+            try {
+                val start = com.simplot.android.data.util.TimeUtil.parse(p.positionTimeStart)
+                val now = com.simplot.android.data.util.TimeUtil.parse(nowStr)
+                if (now.isBefore(start)) return false
+            } catch (_: Exception) {}
+        }
+        if (p.positionTimeEnd.isNotBlank() && !p.positionTimeEnd.startsWith("2999") && p.positionTimeEnd != "2020-01-01 00:00:00") {
+            try {
+                val end = com.simplot.android.data.util.TimeUtil.parse(p.positionTimeEnd)
+                val now = com.simplot.android.data.util.TimeUtil.parse(nowStr)
+                if (!now.isBefore(end)) return false
+            } catch (_: Exception) {}
+        }
         return true
     }
 

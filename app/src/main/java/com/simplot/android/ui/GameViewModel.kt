@@ -34,9 +34,9 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class ShowSide(val sideName: String?) {
     ALL(null), BLUE("Blue"), RED("Red");
 
-    /** 单位是否对当前视图可见（支持己方与感知迷雾） */
-    fun allows(unit: SimUnit): Boolean =
-        sideName == null || com.simplot.android.engine.FogOfWar.isVisibleTo(unit, sideName)
+    /** 单位是否对当前视图可见（对齐桌面 GetCurrentPerception，支持时间窗与感知迷雾） */
+    fun allows(unit: SimUnit, currentTime: String = ""): Boolean =
+        sideName == null || com.simplot.android.engine.FogOfWar.isVisibleTo(unit, sideName, currentTime)
 
     /** 纯阵营字符串判定（兼顾向后兼容） */
     fun allows(side: String?): Boolean = sideName == null || side == sideName
