@@ -125,11 +125,11 @@ class FogOfWarDualSideTest {
         )
         val showBlue = com.simplot.android.ui.ShowSide.BLUE
         
-        // 23:05 在时间窗内 → 可见
+        // 即时模式（未传时间）直接可见
+        assertTrue("即时模式直接按记录判定可见", showBlue.allows(redTimeBounded))
+        // 23:05 时间窗内 → 可见
         assertTrue("时间窗内可见", showBlue.allows(redTimeBounded, "1942-11-14 23:05:00"))
         // 23:15 时间窗过期 → 不可见
         assertFalse("时间窗过期后隐藏", showBlue.allows(redTimeBounded, "1942-11-14 23:15:00"))
-        // 22:50 尚未侦测到 → 不可见
-        assertFalse("尚未发生侦测时隐藏", showBlue.allows(redTimeBounded, "1942-11-14 22:50:00"))
     }
 }

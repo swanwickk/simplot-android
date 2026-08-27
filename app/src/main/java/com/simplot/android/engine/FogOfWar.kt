@@ -26,26 +26,23 @@ object FogOfWar {
 
     /**
      * 单位是否被指定阵营看见（观察方视角：side 为 "Blue" 或 "Red" 等）。
-     * 100% 对齐桌面版反编译 CUnit.GetCurrentPerception @0x1406cfb00 算法：
-     * - 己方单位：始终对自己可见（isFriendly==true）
-     * - 敌方单位：遍历 PerceptionArray，必须存在 SeenBySide==side 且时间窗有效（PositionTimeStart <= now < PositionTimeEnd）才可见；
-     *   若无记录或时间失效则返回 false（不可见）；
-     * - 中立/公共参考点：无敌对关系默认可见，若显式设了感知则按感知过滤。
+     * 即时读档与推演规则（以 SeenBySide 感知记录为核心依据）：
+     * - 己方单位：始终对自己可见；
+     * - 敌方单位：PerceptionArray 中存在 SeenBySide==side，即刻可见；
+     * - 敌方单位未包含该方感知记录：默认不可见（未被侦测）；
+     * - 中立/公共参考点：无敌对关系默认可见。
      */
     fun isVisibleTo(unit: Unit, side: String, currentTime: String = ""): Boolean {
         // 1. 己方单位：始终对自己可见
         if (unit.side.equals(side, ignoreCase = true)) return true
 
-        // 2. 存在感知记录：按桌面 GetCurrentPerception 遍历匹配 SeenBySide 与时间窗
+        // 2. 存在感知记录：只要列表中存在对应观察侧的记录，即刻判定可见！
         val pa = unit.perceptionArray
         if (pa != null && pa.isNotEmpty()) {
             return pa.any { p ->
                 if (!p.seenBySide.equals(side, ignoreCase = true)) return@any false
-                if (currentTime.isNotBlank()) {
-                    isPerceptionActiveAt(p, currentTime)
-                } else {
-                    true
-                }
+                // 即时模式（currentTime 为空）或时间有效，即刻可见
+                if (currentTime.isBlank()) true else isPerceptionActiveAt(p, currentTime)
             }
         }
 
@@ -61,16 +58,11 @@ object FogOfWar {
         return true
     }
 
-    /** 感知记录是否在指定时间有效（桌面 PositionTimeStart <= now < PositionTimeEnd 判定） */
+    /** 感知记录时间判定（宽容防御：仅当明确存在过期时间且解析确认已过期时才阻断，其余一律有效） */
     fun isPerceptionActiveAt(p: Perception, nowStr: String): Boolean {
-        if (p.positionTimeStart.isNotBlank()) {
-            try {
-                val start = com.simplot.android.data.util.TimeUtil.parse(p.positionTimeStart)
-                val now = com.simplot.android.data.util.TimeUtil.parse(nowStr)
-                if (now.isBefore(start)) return false
-            } catch (_: Exception) {}
-        }
-        if (p.positionTimeEnd.isNotBlank() && !p.positionTimeEnd.startsWith("2999") && p.positionTimeEnd != "2020-01-01 00:00:00") {
+        if (p.positionTimeEnd.isNotBlank() &&
+            !p.positionTimeEnd.startsWith("2999") &&
+            p.positionTimeEnd != "2020-01-01 00:00:00") {
             try {
                 val end = com.simplot.android.data.util.TimeUtil.parse(p.positionTimeEnd)
                 val now = com.simplot.android.data.util.TimeUtil.parse(nowStr)
