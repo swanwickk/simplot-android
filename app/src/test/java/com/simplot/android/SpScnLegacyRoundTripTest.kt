@@ -124,6 +124,7 @@ class SpScnLegacyRoundTripTest {
         val redText = SpScnCodec.fromScnFileBytes(redBytes)
         assertTrue(JsonUtil.isScenarioJson(redText))
         val back = JsonUtil.fromJson(redText)
-        assertEquals(3, back.units.size + 0) // S001 visible + S002 + I014 (blue I014 visible due to neutral? depends on fog)
+        // Red 视角：Red 己方 S002 + 对 Red 可见的 Blue 单位 S001（Blue 机场 I014 未侦测不可见）= 2 单位
+        assertEquals(2, back.units.size)
     }
 }

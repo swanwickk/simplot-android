@@ -24,17 +24,27 @@ import com.simplot.android.data.model.Unit
  */
 object FogOfWar {
 
-    /** 单位是否被指定阵营看见 */
+    /** 单位是否被指定阵营看见（观察方视角：side 为 "Blue" 或 "Red" 等） */
     fun isVisibleTo(unit: Unit, side: String): Boolean {
-        // 己方单位始终可见
-        if (unit.side == side) return true
-        // 未启用迷雾（无感知记录）→ 全可见
-        val pa = unit.perceptionArray ?: return true
-        if (pa.isEmpty()) return true
-        // 已启用迷雾 → 仅当存在该阵营的感知记录
-        return pa.any { p ->
-            p.seenBySide == side || p.seenBySide.equals(side, ignoreCase = true)
+        // 1. 己方单位：始终对自己可见
+        if (unit.side.equals(side, ignoreCase = true)) return true
+
+        // 2. 如果明确设置了感知记录（PerceptionArray）
+        val pa = unit.perceptionArray
+        if (pa != null && pa.isNotEmpty()) {
+            return pa.any { p -> p.seenBySide.equals(side, ignoreCase = true) }
         }
+
+        // 3. 未设感知记录（未被任何外部阵营侦测到）：
+        // - 明确敌对阵营（如 Red 单位在 Blue 视角下，或 Blue 单位在 Red 视角下）：默认不可见！
+        val isEnemy = (side.equals("Blue", ignoreCase = true) && unit.side.equals("Red", ignoreCase = true)) ||
+                      (side.equals("Red", ignoreCase = true) && unit.side.equals("Blue", ignoreCase = true))
+        if (isEnemy) {
+            return false
+        }
+
+        // - 中立/未知/参考点（Neutral / Unknown / All 等非对立单位）：默认可见
+        return true
     }
 
     /**
