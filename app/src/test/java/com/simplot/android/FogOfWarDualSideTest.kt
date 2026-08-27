@@ -87,4 +87,42 @@ class FogOfWarDualSideTest {
         val originalRed = scn.units.first { it.idNum == "S002" }
         assertTrue(originalRed.name.isNotEmpty())
     }
+
+    @Test
+    fun `show side allows red unit when visible to blue`() {
+        val scn = scenario()
+        val blueUnit = scn.units.first { it.idNum == "S001" } // Blue
+        val redUnit = scn.units.first { it.idNum == "S002" }  // Red, perception seenBySide="Blue"
+        
+        val showBlue = com.simplot.android.ui.ShowSide.BLUE
+        val showRed = com.simplot.android.ui.ShowSide.RED
+        val showAll = com.simplot.android.ui.ShowSide.ALL
+
+        // ALL: 全部可见
+        assertTrue(showAll.allows(blueUnit))
+        assertTrue(showAll.allows(redUnit))
+
+        // BLUE 视图：蓝方己方可见 + 红方(对蓝可见)也可见！
+        assertTrue(showBlue.allows(blueUnit))
+        assertTrue("红方单位对蓝方可见时，在蓝方视图下必须允许显示", showBlue.allows(redUnit))
+
+        // RED 视图：红方己方可见 + 蓝方(对红可见)也可见！
+        assertTrue(showRed.allows(redUnit))
+        assertTrue("蓝方单位对红方可见时，在红方视图下必须允许显示", showRed.allows(blueUnit))
+    }
+
+    @Test
+    fun `show side hides enemy unit when fog enabled and not visible`() {
+        val redHidden = Unit(
+            idNum = "S003", side = "Red", name = "Secret-Sub",
+            perceptionArray = mutableListOf(
+                Perception(seenBySide = "Red") // 仅对红方可见，对蓝方不可见
+            )
+        )
+        val showBlue = com.simplot.android.ui.ShowSide.BLUE
+        val showRed = com.simplot.android.ui.ShowSide.RED
+        
+        assertFalse("红方单位未对蓝方开放可见时，在蓝方视图下必须隐藏", showBlue.allows(redHidden))
+        assertTrue("红方单位在红方视图下始终可见", showRed.allows(redHidden))
+    }
 }
