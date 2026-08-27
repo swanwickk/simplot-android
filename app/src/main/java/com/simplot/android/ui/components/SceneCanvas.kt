@@ -64,10 +64,10 @@ fun SceneCanvas(
     distanceUnit: com.simplot.android.data.util.CoordUtil.DistanceUnit = com.simplot.android.data.util.CoordUtil.DistanceUnit.NM
 ) {
     val replaying = replayFrame != null
-    // G30：Show Side 视图过滤（All/Blue/Red）——对齐桌面原始行为：All=全部，Blue=蓝方，Red=红方
+    // G30：Show Side 视图过滤（All/Blue/Red）——感知迷雾参与地图可见性：己方+对己方可见的敌方+中立默认可见
     val viewUnits: List<Unit> =
         if (showSide.sideName == null) file.units
-        else file.units.filter { it.side == showSide.sideName }
+        else file.units.filter { com.simplot.android.engine.FogOfWar.isVisibleTo(it, showSide.sideName) }
     // G32：当前被长按拖拽的单位 IdNum（非空时 transform 手势禁用地图平移，防单位拖动与地图拖动冲突）
     var draggingUnitId by remember { mutableStateOf<String?>(null) }
     // 重绘纪元（反馈④）：tick 变化 → LaunchedEffect 快照写；draw 阶段快照读（epoch）→ 必重绘。
