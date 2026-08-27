@@ -540,19 +540,19 @@ fun UnitEditSheet(
 fun formatCourseSpeed(v: Double): String =
     if (v % 1.0 == 0.0) v.toLong().toString() else v.toString()
 
-/** 「显示为类型」选项：真实类型（留空）→ 空串；其余值与 unitClass 简码一致（契约8）
- *  与 UnitRenderer.CWS_CLASS_CELLS 映射键集合对齐（含 CV 系列 / CG / CL / CA 别名） */
+/** 「显示为类型」选项：留空显示为"未知"（与显示为阵营对齐） */
 private val SHOW_TYPE_OPTIONS: List<Pair<String, String>> = listOf(
-    "真实类型（留空）" to "",
+    "未知" to "",
     "BB" to "BB", "CG" to "CG", "CV" to "CV", "DD" to "DD", "FF" to "FF", "PC" to "PC",
     "LA" to "LA", "LC" to "LC", "LS" to "LS", "AR" to "AR", "AS" to "AS",
     "CL" to "CL", "CA" to "CA", "CC" to "CC"
 )
 
-/** 「显示为阵营」选项：真实阵营（留空）→ 空串 */
+/** 「显示为阵营」选项：留空显示为"未知" */
 private val SHOW_SIDE_OPTIONS: List<Pair<String, String>> = listOf(
-    "真实阵营（留空）" to "",
-    "Blue" to "Blue", "Red" to "Red", "Neutral" to "Neutral", "Unknown" to "Unknown"
+    "未知 (Unknown)" to "",
+    "蓝方 (Blue)" to "Blue", "红方 (Red)" to "Red",
+    "中立 (Neutral)" to "Neutral"
 )
 
 /**

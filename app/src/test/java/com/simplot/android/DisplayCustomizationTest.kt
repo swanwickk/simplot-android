@@ -101,8 +101,8 @@ class DisplayCustomizationTest {
         assertEquals(0xFFC81E1E.toInt(), UnitRenderer.colorOf("Red"))
         assertEquals(0xFFFFFFFF.toInt(), UnitRenderer.colorOf("Neutral"))
         assertEquals(0xFF787878.toInt(), UnitRenderer.colorOf("All"))
-        assertEquals(0xFF5A5A5A.toInt(), UnitRenderer.colorOf("Unknown"))
-        assertEquals(0xFF5A5A5A.toInt(), UnitRenderer.colorOf("其他"))
+        assertEquals(0xFFFFD500.toInt(), UnitRenderer.colorOf("Unknown"))  // Unknown=黄色（桌面语义）
+        assertEquals(0xFFFFD500.toInt(), UnitRenderer.colorOf("其他"))    // Unknown=黄色
     }
 
     @Test

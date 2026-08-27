@@ -51,7 +51,7 @@ object UnitRenderer {
             "Red" -> redFor
             "Neutral" -> 0xFFFFFFFF.toInt()   // 桌面 Neutral=白
             "All" -> 0xFF787878.toInt()        // 桌面 All=灰
-            else -> 0xFF5A5A5A.toInt()         // Unknown=深灰
+            else -> 0xFFFFD500.toInt()         // Unknown=黄色（桌面语义）
         }
     }
 
