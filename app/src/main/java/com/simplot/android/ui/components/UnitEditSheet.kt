@@ -110,16 +110,18 @@ fun UnitEditSheet(
     // G20：主动传感器开关（桌面版 ContainerActiveSensors/ActiveRadar/ActiveSonar）
     var activeRadar by remember { mutableStateOf(unit.isActiveRadar) }
     var activeSonar by remember { mutableStateOf(unit.isActiveSonar) }
-    // 可见性是因（勾选输入），渲染是果：编辑器回显直接读 PerceptionArray 是否含 SeenBySide，
-    // 不走 FogOfWar.isVisibleTo 的 null->全可见兜底（否则裁判全量存档 43 个 null 全亮为两勾，误导为已设互盲）
+    // 迷雾与阵营感知状态（对齐桌面版 ContainerPerception 语义）：
+    // 己方单位对己方恒可见；对对方阵营的可见性取决于 PerceptionArray 是否含对应记录。
+    val isBlueUnit = unit.side.equals("Blue", ignoreCase = true)
+    val isRedUnit = unit.side.equals("Red", ignoreCase = true)
+
     fun hasSeen(side: String) = unit.perceptionArray?.any { it.seenBySide.equals(side, true) } == true
     val isMistUnset = unit.perceptionArray == null
-    // 保存用初始值：仅勾选变化才写 PerceptionArray，不把 null 污染成显式互可见
-    // 未设迷雾：己方始终可见，对方默认不可见（取消勾选即启用互盲的因，落盘才生成 SpScn 分视角）
-    val initialVisibleBlue = if (isMistUnset) unit.side == "Blue" else hasSeen("Blue")
-    val initialVisibleRed = if (isMistUnset) unit.side == "Red" else hasSeen("Red")
-    var visibleBlue by remember { mutableStateOf(initialVisibleBlue) }
-    var visibleRed by remember { mutableStateOf(initialVisibleRed) }
+
+    val initialVisibleBlue = if (isBlueUnit) true else hasSeen("Blue")
+    val initialVisibleRed = if (isRedUnit) true else hasSeen("Red")
+    var visibleBlue by remember(unit.idNum) { mutableStateOf(initialVisibleBlue) }
+    var visibleRed by remember(unit.idNum) { mutableStateOf(initialVisibleRed) }
 
     // 受限项（需求二：对可见单位的脱敏设置，取 Blue/Red 感知记录的值作为编辑状态，双视角）
     val blueRec = unit.perceptionArray?.firstOrNull { it.seenBySide == "Blue" }
@@ -340,10 +342,18 @@ fun UnitEditSheet(
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = visibleBlue, onCheckedChange = { visibleBlue = it })
-                    Text("对蓝方可见")
-                    Checkbox(checked = visibleRed, onCheckedChange = { visibleRed = it })
-                    Text("对红方可见")
+                    Checkbox(
+                        checked = visibleBlue,
+                        onCheckedChange = { visibleBlue = it },
+                        enabled = !isBlueUnit
+                    )
+                    Text("对蓝方可见" + if (isBlueUnit) "（己方始终可见）" else "")
+                    Checkbox(
+                        checked = visibleRed,
+                        onCheckedChange = { visibleRed = it },
+                        enabled = !isRedUnit
+                    )
+                    Text("对红方可见" + if (isRedUnit) "（己方始终可见）" else "")
                 }
 
                 // G20：主动传感器开关（桌面版 ContainerActiveSensors/ActiveRadar/ActiveSonar；
@@ -457,17 +467,23 @@ fun UnitEditSheet(
                 // G20：主动传感器开关写回（桌面 ContainerActiveSensors）
                 unit.isActiveRadar = activeRadar
                 unit.isActiveSonar = activeSonar
-                if (visibleBlue != initialVisibleBlue || (isMistUnset && !visibleBlue)) {
-                    com.simplot.android.engine.FogOfWar.setVisibility(
-                        unit, "Blue", visibleBlue, unit.positionTimeCreated,
-                        file = null
-                    )
+                // 阵营感知可见性写回（对齐桌面版：己方无需记录，对方由勾选决定增删 Perception 记录）
+                val createdTime = unit.positionTimeCreated.ifBlank { "1942-11-14 23:00:00" }
+                if (!isBlueUnit) {
+                    val currentSeen = hasSeen("Blue")
+                    if (visibleBlue != currentSeen) {
+                        com.simplot.android.engine.FogOfWar.setVisibility(
+                            unit, "Blue", visibleBlue, createdTime, file = null
+                        )
+                    }
                 }
-                if (visibleRed != initialVisibleRed || (isMistUnset && !visibleRed)) {
-                    com.simplot.android.engine.FogOfWar.setVisibility(
-                        unit, "Red", visibleRed, unit.positionTimeCreated,
-                        file = null
-                    )
+                if (!isRedUnit) {
+                    val currentSeen = hasSeen("Red")
+                    if (visibleRed != currentSeen) {
+                        com.simplot.android.engine.FogOfWar.setVisibility(
+                            unit, "Red", visibleRed, createdTime, file = null
+                        )
+                    }
                 }
                 // 受限项写回 Blue/Red 感知记录（仅当该单位对该方可见且有记录时）
                 writePerception(unit, "Blue", visibleBlue, showNameBlue, showCSBlue, showClassBlue, showTypeBlue, showSideBlue, showAltBlue, showDepthBlue)
